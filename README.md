@@ -25,7 +25,6 @@ IBM Cloud Fail Over is a Python module designed to automate failover processes f
 - `allow_ip_spoofing` enabled on each Virtual Network Interface in the active/passive pair.
 - [Instance Metadata Service enabled](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-configure-service&interface=ui) on both VSIs in the active/passive pair.
 - Pacemaker installed and configured on the active/passive cluster nodes.
-- [IBM Cloud VPC Python SDK](https://github.com/IBM/vpc-python-sdk) (`ibm-vpc` and `ibm-cloud-sdk-core`) — installed automatically as dependencies.
 - IAM authentication: either a [Trusted Profile](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-trusted-profile-metadata&interface=ui) linked to the VSI (recommended, no key stored on host) or an [IBM Cloud API key](https://cloud.ibm.com/docs/account?topic=account-userapikey&interface=ui).
 
 ## Installation
