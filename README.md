@@ -3,12 +3,35 @@
 
 ## Overview
 
-IBM Cloud Fail Over is a Python module designed to automate failover processes for applications hosted on IBM Cloud. This module provides essential functions to manage failover scenarios effectively, ensuring high availability and reliability.
+IBM Cloud Fail Over is a Python module designed to automate failover processes for applications hosted on IBM Cloud. It is the core library used by the following Pacemaker OCF resource agents merged into [ClusterLabs/resource-agents](https://github.com/ClusterLabs/resource-agents):
+
+- [`ibm-cloud-vpc-cr-vip`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-cr-vip.in) — Custom Route VIP failover (same AZ and cross-AZ)
+- [`ibm-cloud-vpc-move-fip`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-move-fip.in) — Floating IP failover (single AZ)
+- [`ibm-cloud-vpc-move-par`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-move-par.in) — Public Address Range (PAR) failover
+
+The module provides essential functions to manage IBM Cloud VPC failover scenarios effectively, ensuring high availability and reliability.
 
 ## Features
 
-- **Automated Failover**: Seamlessly switch to backup resources when primary resources are unavailable.
-- **Resource Management**: Manage critical resources like Virtual IPs and Floating IPs with ease.
+- **Seamless IBM Cloud Integration**: Natively integrates with IBM Cloud VPC APIs — no additional middleware required.
+- **Pacemaker Resource Management**: Serves as the backing library for Pacemaker OCF resource agents, enabling IBM Cloud VPC resources to be managed directly from a Pacemaker cluster.
+- **High Availability for IBM Cloud Applications**: Automates failover to ensure continuous availability of applications running on IBM Cloud VPC.
+- **Supported Failover Modes**:
+  - **Custom Route VIP — Active/Passive Same AZ**: Moves a VPC custom route next-hop to the active VSI within the same Availability Zone.
+  - **Custom Route VIP — Cross/Multi-AZ**: Moves a VPC custom route next-hop across Availability Zones to the active VSI.
+  - **Floating IP Failover (Single AZ)**: Moves a Floating IP between VNIs within a single Availability Zone.
+  - **Public Address Range (PAR) Failover**: Updates the target zone of a Public Address Range to match the active VSI's Availability Zone.
+- **Easy Configuration and Deployment**: Minimal parameters per function; designed to drop into existing Pacemaker OCF resource agent scripts.
+- **Trusted Profile IAM or API Key Authentication**: Supports keyless authentication via IBM Cloud Instance Metadata Trusted Profiles, with optional fallback to an explicit IBM Cloud API key.
+
+## Prerequisites
+
+- A working IBM Cloud account with access to the VPC infrastructure service.
+- A VNI-based [Virtual Network Interface](https://cloud.ibm.com/docs/vpc?topic=vpc-vni-about) pair to be used as the active/passive endpoints.
+- `allow_ip_spoofing` enabled on each Virtual Network Interface in the active/passive pair.
+- [Instance Metadata Service enabled](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-configure-service&interface=ui) on both VSIs in the active/passive pair.
+- Pacemaker installed and configured on the active/passive cluster nodes.
+- IAM authentication: either a [Trusted Profile](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-trusted-profile-metadata&interface=ui) linked to the VSI (recommended, no key stored on host) or an [IBM Cloud API key](https://cloud.ibm.com/docs/account?topic=account-userapikey&interface=ui).
 
 ## Installation
 
