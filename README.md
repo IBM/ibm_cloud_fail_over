@@ -3,7 +3,13 @@
 
 ## Overview
 
-IBM Cloud Fail Over is a Python module designed to automate failover processes for applications hosted on IBM Cloud. It is the core library used by Pacemaker OCF resource agents contributed to [ClusterLabs/resource-agents](https://github.com/ClusterLabs/resource-agents). The module provides essential functions to manage IBM Cloud VPC failover scenarios effectively, ensuring high availability and reliability.
+IBM Cloud Fail Over is a Python module designed to automate failover processes for applications hosted on IBM Cloud. It is the core library used by the following Pacemaker OCF resource agents merged into [ClusterLabs/resource-agents](https://github.com/ClusterLabs/resource-agents):
+
+- [`ibm-cloud-vpc-cr-vip`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-cr-vip.in) — Custom Route VIP failover (same AZ and cross-AZ)
+- [`ibm-cloud-vpc-move-fip`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-move-fip.in) — Floating IP failover (single AZ)
+- [`ibm-cloud-vpc-move-par`](https://github.com/ClusterLabs/resource-agents/blob/main/heartbeat/ibm-cloud-vpc-move-par.in) — Public Address Range (PAR) failover
+
+The module provides essential functions to manage IBM Cloud VPC failover scenarios effectively, ensuring high availability and reliability.
 
 ## Features
 
