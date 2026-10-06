@@ -23,6 +23,7 @@ import http.client
 import json
 import sys
 import socket
+import subprocess
 from ipaddress import ip_network
 from typing import Tuple, Optional
 from os import environ as env
@@ -62,6 +63,8 @@ class HAFailOver():
     ext_ip_1 = ""
     ext_ip_2 = ""
     vsi_local_az = ""
+    interface_name = ""
+    vip_addresses = []
     DEBUG = False
     #DEBUG = True
 
@@ -159,11 +162,31 @@ class HAFailOver():
             self.logger(f"Error updating floating IP: {e}")
             raise
 
+    def _update_os_routes(self, cmd):
+        """Update local OS routes.
+
+        Args:
+            cmd (str): 'SET' or 'UNSET'
+        """
+        self.logger("Calling update OS routes.")
+        self.logger(f"Command: {cmd}")
+
+        if not self.vip_addresses:
+            return
+
+        op = 'add' if cmd == 'SET' else 'del'
+
+        for vip_address in self.vip_addresses:
+            try:
+                subprocess.run(['ip', 'addr', op, vip_address, 'dev', self.interface_name], check=True)
+            except subprocess.CalledProcessError as e:
+                self.logger(f"Error updating OS routes: {e}")
+
     def update_vpc_routing_table_route(self, cmd, ingress_types=None):
         """Update VPC routing table route.
 
         Args:
-            cmd (str): 'SET' or 'GET'
+            cmd (str): 'SET' or 'GET' or 'UNSET'
             ingress_types (list, optional): List of ingress types to update. Can include:
                 - 'route_internet_ingress'
                 - 'route_direct_link_ingress'
@@ -179,6 +202,8 @@ class HAFailOver():
         self.logger(f"VPC self.ext_ip_1: {self.ext_ip_1}")
         self.logger(f"VPC self.ext_ip_2: {self.ext_ip_2}")
         self.logger(f"VPC self.api_key: {str(self.apikey)}")
+        self.logger(f"VPC self.interface_name: {self.interface_name}")
+        self.logger(f"VPC self.vip_addresses: {self.vip_addresses}")
         self.logger(f"Command: {cmd}")
         self.logger(f"Ingress types to update: {ingress_types}")
 
@@ -275,6 +300,7 @@ class HAFailOver():
                                 self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
 
             self.logger(f"Returning updated next hop: {self.update_next_hop_vsi}")
+            self._update_os_routes(cmd)
             return self.update_next_hop_vsi
 
         except ApiException as e:
@@ -1216,15 +1242,17 @@ def fail_over_get_attached_fip(api_key):
             return attached_fip_id, attached_fip_ip
     return None , None
 
-def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key=""):
+def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_name="", vip_addresses=""):
     """_summary_
 
     Args:
-        cmd (string): SET or GET
+        cmd (string): SET or GET or UNSET
         vpc_url (string): IBM cloud regional VPC URL
         ext_ip_1 (string): Ip of the first VSI
-        ext_ip_2 (string): Ip of teh secound VSI
-        apy_key  (string)
+        ext_ip_2 (string): Ip of the second VSI
+        api_key  (string)
+        interface_name (string): Local network interface to assign vip_addresses to
+        vip_addresses (string): Comma-separated VIP addresses to assign locally
     Returns:
         _type_: _description_
     """
@@ -1233,6 +1261,8 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key=""):
     ha_fail_over.ext_ip_2 = ext_ip_2
     ha_fail_over.ext_ip_1 = ext_ip_1
     ha_fail_over.apikey = api_key
+    ha_fail_over.interface_name = interface_name
+    ha_fail_over.vip_addresses = vip_addresses.split(',')
     instance_metadata = ha_fail_over.get_instance_metadata()
     if "vpc" in instance_metadata:
         ha_fail_over.vpc_id = instance_metadata["vpc"]["id"]
