@@ -140,7 +140,6 @@ class HAFailOver():
         self.logger("Calling update vpc routing table route method VIP.")
         self.logger(f"VPC ID: {self.vpc_id}")
         self.logger(f"VPC URL: {self.vpc_url}")
-        self.logger(f"VPC self.api_key: {str(self.apikey)}")
         self.logger(f"cmd: {cmd}")
 
         try:
@@ -178,7 +177,6 @@ class HAFailOver():
         self.logger(f"VPC URL: {self.vpc_url}")
         self.logger(f"VPC self.ext_ip_1: {self.ext_ip_1}")
         self.logger(f"VPC self.ext_ip_2: {self.ext_ip_2}")
-        self.logger(f"VPC self.api_key: {str(self.apikey)}")
         self.logger(f"Command: {cmd}")
         self.logger(f"Ingress types to update: {ingress_types}")
 
@@ -285,7 +283,7 @@ class HAFailOver():
         """Get Token
 
         Returns:
-        string:Returning the acsess token
+            string: Returning the access token
 
         """
         if self.apikey is not None:
@@ -523,7 +521,6 @@ class HAFailOver():
             self.logger(env)
             if self.API_KEY in env:
                 self.apikey = env[self.API_KEY]
-                self.logger(self.API_KEY + ": " + self.apikey)
 
             if self.VPC_ID in env:
                 self.vpc_id = env[self.VPC_ID]
@@ -1223,7 +1220,7 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key=""):
         cmd (string): SET or GET
         vpc_url (string): IBM cloud regional VPC URL
         ext_ip_1 (string): Ip of the first VSI
-        ext_ip_2 (string): Ip of teh secound VSI
+        ext_ip_2 (string): Ip of the second VSI
         apy_key  (string)
     Returns:
         _type_: _description_
