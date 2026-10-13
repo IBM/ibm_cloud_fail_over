@@ -8,40 +8,26 @@ version = "1.0.25"
 authors = [
   { name="Eran Gampel", email="dev@gampel.net" },
 ]
-description = "Module providing IBM Fail over functions"
+description = "Package providing IBM Cloud failover functions for HA clusters."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["ibm-cloud-sdk-core" , "ibm-vpc"]
+dependencies = ["ibm-cloud-sdk-core", "ibm-vpc", "python-dotenv"]
 [project.urls]
-Homepage = "https://github.com/gampel/ibm_cloud_fail_over"
-Issues = "https://github.com/gampel/ibm_cloud_fail_over/issues"
+Homepage = "https://github.com/IBM/ibm_cloud_fail_over"
+Issues = "https://github.com/IBM/ibm_cloud_fail_over/issues"
 
 [tool.pylint.messages_control]
 disable = [
-    "C0111",  # missing-docstring
-    "C0103",  # invalid-name
-    "C0301",  # line-too-long
-    "C0330",  # bad-continuation
-    "C0326",  # bad-whitespace
-    "R0903",  # too-few-public-methods
-    "R0913",  # too-many-arguments
-    "R0914",  # too-many-locals
-    "R0915",  # too-many-statements
-    "W0703",  # broad-except
+    "C0103", # invalid-names
+    "C0301", # line-too-long
+    "C0302", # too-many-lines
+    "R0902", # too-many-instance-attributes
+    "R0913", # too-many-arguments
+    "R0917", # too-many-positional-arguments
+    "R1702", # too-many-nested blocks
 ]
-
-[tool.pylint.format]
-max-line-length = 120
-
-[tool.pylint.basic]
-good-names = ["i", "j", "k", "ex", "Run", "_", "id", "ip", "vpc", "vsi", "par", "az", "fip", "vni"]
-
-[tool.pylint.design]
-max-args = 8
-max-attributes = 15
-max-public-methods = 20
