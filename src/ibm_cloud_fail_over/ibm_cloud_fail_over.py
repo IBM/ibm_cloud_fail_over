@@ -200,7 +200,7 @@ class HAFailOver():
                 # Check if this is one of the specified ingress routing tables
 
                 is_ingress_table = any(table.get(ingress_type) for ingress_type in ingress_types)
-                if True:
+                if True: # pylint: disable=using-constant-test
                     self.logger(f"Found matching ingress routing table: {table['name']} (ID: {table['id']})")
                     self.logger(f"Table type: internet_ingress={table.get('route_internet_ingress')}, "
                               f"direct_link_ingress={table.get('route_direct_link_ingress')}, "

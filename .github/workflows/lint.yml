@@ -1,4 +1,4 @@
-name: Python application
+name: Lint
 
 on:
   push:
@@ -9,11 +9,11 @@ on:
 permissions: {}
 
 jobs:
-  build:
+  pylint:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.8, 3.9, '3.10']
+        python-version: ['3.11', '3.12', '3.13', '3.14', '3.15']
 
     steps:
     - uses: actions/checkout@v7
@@ -31,4 +31,4 @@ jobs:
 
     - name: Analysing the code with pylint
       run: |
-        pylint --rcfile=.pylintrc src/ibm_cloud_fail_over/
+        pylint src/ibm_cloud_fail_over/

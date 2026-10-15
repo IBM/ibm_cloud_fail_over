@@ -1,6 +1,5 @@
 # IBM Cloud Fail Over Functions
 
-
 ## Overview
 
 IBM Cloud Fail Over is a Python module designed to automate failover processes for applications hosted on IBM Cloud. It is the core library used by the following Pacemaker OCF resource agents merged into [ClusterLabs/resource-agents](https://github.com/ClusterLabs/resource-agents):
@@ -35,7 +34,7 @@ The module provides essential functions to manage IBM Cloud VPC failover scenari
 
 ## Installation
 
-You can install the IBM Cloud Fail Over module using pip. Run the following command:
+You can install the IBM Cloud Fail Over module using pip:
 
 ```bash
 pip install ibm_cloud_fail_over
@@ -55,29 +54,33 @@ This function manages the failover of a Cloud Resource Virtual IP (CR VIP).
 from ibm_cloud_fail_over import fail_over_cr_vip
 
 # Example usage
-active_ip = fail_over_cr_vip(vpc_url='IBM Cloud VPC regional URL",
-                           primary_vip='your_primary_vip',
-                           secondary_vip='your_secondary_vip',
-                           api_key="Optional: API key" )
+active_ip = fail_over_cr_vip(
+    cmd='SET',
+    vpc_url='IBM Cloud VPC regional URL',
+    ext_ip_1='IP of the first VSI',
+    ext_ip_2='IP of the second VSI',
+    api_key='Optional: API key'
+)
 print(active_ip)
 ```
 
 **Parameters:**
 
-| Parameter          | Type   | Description                                      |
-|--------------------|--------|--------------------------------------------------|
-| `vpc_url    `      | str    | IBM Cloud VPC regional URL.                      |
-| `primary_vip`      | str    | The primary Virtual IP to monitor.               |
-| `secondary_vip`    | str    | The secondary Virtual IP to switch to.           |
-| `api_key`          | str    | Optional needed only if you are not using trusted profile, IBM cloud api acsess key               |
+| Parameter  | Type | Description                                                                          |
+|------------|------|--------------------------------------------------------------------------------------|
+| `cmd`      | str  | Command to execute: 'SET' to perform failover or 'GET' to retrieve current next hop. |
+| `vpc_url`  | str  | IBM Cloud VPC regional URL.                                                          |
+| `ext_ip_1` | str  | IP address of the first VSI.                                                         |
+| `ext_ip_2` | str  | IP address of the second VSI.                                                        |
+| `api_key`  | str  | Optional: IBM Cloud API access key (needed only if not using trusted profile).       |
 
 **Returns:**
 
--  The Active ip post failover operation.
+- The next hop IP address.
 
 #### `fail_over_floating_ip_start`
 
-This function manages the failover of a Floating IP Attach to the caller Endpoint (VSI/BM)
+This function manages the failover of a Floating IP by attaching it to the caller endpoint (VSI/BM).
 
 **Usage:**
 
@@ -85,30 +88,35 @@ This function manages the failover of a Floating IP Attach to the caller Endpoin
 from ibm_cloud_fail_over import fail_over_floating_ip_start
 
 # Example usage
-result = fail_over_floating_ip_start(vpc_url='IBM Cloud VPC regional URL",
-                                master_vni_id="Virtual network inetface uuid for new active",
-                                passive_vni_id="Virtual network inetface uuid for new passive" ,
-                                fip_id="the floating ip uuid",
-                                api_key="Optional: API key" ))
-print(result)
+fip_id, fip_ip = fail_over_floating_ip_start(
+    vpc_url='IBM Cloud VPC regional URL',
+    vni_id_1='First VNI ID',
+    vni_id_2='Second VNI ID',
+    fip_id='the floating IP UUID',
+    api_key='Optional: API key'
+)
+print(fip_id, fip_ip)
 ```
 
 **Parameters:**
 
-| Parameter          | Type     | Description                                      |
-|--------------------|----------|--------------------------------------------------|
-| `vpc_url    `      | str(url) | IBM Cloud VPC regional URL.                      |
-| `master_vni_id`    | str(uuid)| Virtual network inetface uuid for new active.    |
-| `passive_vni_id`   | str(uuid)| Virtual network inetface uuid for new active.    |
-| `fip_id        `   | str(uuid)| Floating IP uuid to move.                        |
-| `api_key`          | str      | Optional needed only if you are not using trusted profile, IBM cloud api acsess key|
+| Parameter  | Type      | Description                                                                    |
+|------------|-----------|--------------------------------------------------------------------------------|
+| `vpc_url`  | str (url) | IBM Cloud VPC regional URL.                                                    |
+| `vni_id_1` | str (uuid)| First VNI ID.                                                                  |
+| `vni_id_2` | str (uuid)| Second VNI ID.                                                                 |
+| `fip_id`   | str (uuid)| Floating IP UUID to move.                                                      |
+| `api_key`  | str       | Optional: IBM Cloud API access key (needed only if not using trusted profile). |
+
 **Returns:**
 
-- A confirmation message indicating the success or failure of the failover operation.
+- A tuple containing:
+  - Floating IP ID
+  - Floating IP address
 
 #### `fail_over_floating_ip_stop`
 
-This function manages the failover of a Floating IP Detach to the  caller Endpoint (VSI/BM)
+This function manages the failover of a Floating IP by detaching it from the caller endpoint (VSI/BM).
 
 **Usage:**
 
@@ -116,29 +124,35 @@ This function manages the failover of a Floating IP Detach to the  caller Endpoi
 from ibm_cloud_fail_over import fail_over_floating_ip_stop
 
 # Example usage
-result = fail_over_floating_ip_stop(vpc_url='IBM Cloud VPC regional URL",
-                                master_vni_id="Virtual network inetface uuid for new active",
-                                passive_vni_id="Virtual network inetface uuid for new passive" ,
-                                fip_id="the floating ip uuid",
-                                api_key="Optional: API key" ))
-print(result)
+fip_id, fip_ip = fail_over_floating_ip_stop(
+    vpc_url='IBM Cloud VPC regional URL',
+    vni_id_1='First VNI ID',
+    vni_id_2='Second VNI ID',
+    fip_id='the floating IP UUID',
+    api_key='Optional: API key'
+)
+print(fip_id, fip_ip)
 ```
 
 **Parameters:**
 
-| Parameter          | Type     | Description                                      |
-|--------------------|----------|--------------------------------------------------|
-| `vpc_url    `      | str(url) | IBM Cloud VPC regional URL.                      |
-| `master_vni_id`    | str(uuid)| Virtual network inetface uuid for new active.    |
-| `passive_vni_id`   | str(uuid)| Virtual network inetface uuid for new active.    |
-| `fip_id        `   | str(uuid)| Floating IP uuid to move.                        |
-| `api_key`          | str      | Optional needed only if you are not using trusted profile, IBM cloud api acsess key |
+| Parameter  | Type      | Description                                                                    |
+|------------|-----------|--------------------------------------------------------------------------------|
+| `vpc_url`  | str (url) | IBM Cloud VPC regional URL.                                                    |
+| `vni_id_1` | str (uuid)| First VNI ID.                                                                  |
+| `vni_id_2` | str (uuid)| Second VNI ID.                                                                 |
+| `fip_id`   | str (uuid)| Floating IP UUID to move.                                                      |
+| `api_key`  | str       | Optional: IBM Cloud API access key (needed only if not using trusted profile). |
+
 **Returns:**
 
-- A confirmation message indicating the success or failure of the failover operation.
+- A tuple containing:
+  - Floating IP ID
+  - Floating IP address
+
 #### `fail_over_get_attached_fip`
 
-This function manages the failover of a Floating IP Detach to the  caller Endpoint (VSI/BM)
+This function retrieves the attached Floating IP for the caller endpoint (VSI/BM).
 
 **Usage:**
 
@@ -146,18 +160,22 @@ This function manages the failover of a Floating IP Detach to the  caller Endpoi
 from ibm_cloud_fail_over import fail_over_get_attached_fip
 
 # Example usage
-api_key = ""
-attached_fip_id, attached_fip_ip = fail_over_get_attached_fip(api_key)
+attached_fip_id, attached_fip_ip = fail_over_get_attached_fip(api_key='Optional: API key')
 
 print(attached_fip_ip)
 print(attached_fip_id)
 ```
 
 **Parameters:**
-None
+
+| Parameter | Type | Description                                                          |
+|-----------|------|----------------------------------------------------------------------|
+| `api_key` | str  | IBM Cloud API access key (needed only if not using trusted profile). |
 
 **Returns:**
-attached_fip_id, attached_fip_ip 
+
+- `attached_fip_id`: The UUID of the attached Floating IP
+- `attached_fip_ip`: The IP address of the attached Floating IP
 
 #### `fail_over_public_address_range`
 
@@ -170,26 +188,30 @@ from ibm_cloud_fail_over import fail_over_public_address_range
 
 # Example usage
 result = fail_over_public_address_range(
-    range_id="public_address_range_uuid",
-    vpc_url="IBM Cloud VPC regional URL",
-    api_key="Optional: API key",
-    api_version="2026-06-01",  # Optional: API version
-    maturity=None,             # Optional: API maturity level (None for GA APIs)
-    generation="2"             # Optional: API generation
+    range_id='public_address_range_uuid',
+    vpc_url='IBM Cloud VPC regional URL',
+    api_key='Optional: API key',
+    api_version='2026-06-01',                   # Optional: API version
+    maturity=None,                              # Optional: API maturity level (None for GA APIs)
+    generation='2',                             # Optional: API generation
+    nexthop_ip_1='IP address of the first VSI', # Optional
+    nexthop_ip_2='IP address of the second VSI' # Optional
 )
 print(result)
 ```
 
 **Parameters:**
 
-| Parameter          | Type     | Description                                      |
-|--------------------|----------|--------------------------------------------------|
-| `range_id`         | str(uuid)| The ID of the public address range to update     |
-| `vpc_url`          | str(url) | IBM Cloud VPC regional URL                       |
-| `api_key`          | str      | Optional: IBM Cloud API key (needed only if not using trusted profile) |
-| `api_version`      | str      | Optional: API version (defaults to "2026-06-01") |
-| `maturity`         | str      | Optional: API maturity level (defaults to None, omitted for GA APIs) |
-| `generation`       | str      | Optional: API generation (defaults to "2")       |
+| Parameter      | Type      | Description                                                                    |
+|----------------|-----------|--------------------------------------------------------------------------------|
+| `range_id`     | str (uuid)| The ID of the public address range to update.                                  |
+| `vpc_url`      | str (url) | IBM Cloud VPC regional URL.                                                    |
+| `api_key`      | str       | Optional: IBM Cloud API access key (needed only if not using trusted profile). |
+| `api_version`  | str       | Optional: API version (defaults to "2026-06-01").                              |
+| `maturity`     | str       | Optional: API maturity level (defaults to None, omitted for GA APIs).          |
+| `generation`   | str       | Optional: API generation (defaults to "2").                                    |
+| `nexthop_ip_1` | str       | Optional: IP address of the first VSI (defaults to "").                        |
+| `nexthop_ip_2` | str       | Optional: IP address of the second VSI (defaults to "").                       |
 
 **Returns:**
 
@@ -197,6 +219,7 @@ print(result)
 - None if no update was needed (range already in correct zone)
 
 **Note:**
+
 - The function automatically detects the VSI's local availability zone
 - The range is only updated if its current zone differs from the VSI's local zone
 - Requires the same instance metadata service and trusted profile setup as other functions
@@ -212,30 +235,30 @@ from ibm_cloud_fail_over import fail_over_check_par_zone_compatibility
 
 # Example usage
 zones_match, current_zone = fail_over_check_par_zone_compatibility(
-    range_id="public_address_range_uuid",
-    vpc_url="IBM Cloud VPC regional URL",
-    api_key="Optional: API key",
-    api_version="2026-06-01",  # Optional: API version
-    maturity=None,             # Optional: API maturity level (None for GA APIs)
-    generation="2"             # Optional: API generation
+    range_id='public_address_range_uuid',
+    vpc_url='IBM Cloud VPC regional URL',
+    api_key='Optional: API key',
+    api_version='2026-06-01', # Optional: API version
+    maturity='ga',            # Optional: API maturity level
+    generation='2'            # Optional: API generation
 )
 
 if zones_match:
-    print(f"PAR and VSI are in the same zone: {current_zone}")
+    print(f'PAR and VSI are in the same zone: {current_zone}')
 else:
-    print(f"PAR and VSI are in different zones. PAR zone: {current_zone}")
+    print(f'PAR and VSI are in different zones. PAR zone: {current_zone}')
 ```
 
 **Parameters:**
 
-| Parameter          | Type     | Description                                      |
-|--------------------|----------|--------------------------------------------------|
-| `range_id`         | str(uuid)| The ID of the public address range to check      |
-| `vpc_url`          | str(url) | IBM Cloud VPC regional URL                       |
-| `api_key`          | str      | Optional: IBM Cloud API key (needed only if not using trusted profile) |
-| `api_version`      | str      | Optional: API version (defaults to "2026-06-01") |
-| `maturity`         | str      | Optional: API maturity level (defaults to None, omitted for GA APIs) |
-| `generation`       | str      | Optional: API generation (defaults to "2")       |
+| Parameter     | Type      | Description                                                                    |
+|---------------|-----------|--------------------------------------------------------------------------------|
+| `range_id`    | str (uuid)| The ID of the public address range to check.                                   |
+| `vpc_url`     | str (url) | IBM Cloud VPC regional URL.                                                    |
+| `api_key`     | str       | Optional: IBM Cloud API access key (needed only if not using trusted profile). |
+| `api_version` | str       | Optional: API version (defaults to "2026-06-01").                              |
+| `maturity`    | str       | Optional: API maturity level (defaults to "ga").                               |
+| `generation`  | str       | Optional: API generation (defaults to "2").                                    |
 
 **Returns:**
 
@@ -244,6 +267,7 @@ else:
   - `str`: The current zone name of the public address range
 
 **Note:**
+
 - The function automatically detects the VSI's local availability zone
 - Requires the same instance metadata service and trusted profile setup as other functions
 - Useful for checking zone compatibility before performing failover operations
@@ -255,12 +279,10 @@ If you encounter issues while using the module, consider the following:
 - **Invalid IP Addresses**: Ensure that the IP addresses provided for primary and secondary resources are valid and reachable.
 - **Network Issues**: Check your network connectivity to the IBM Cloud resources.
 - **Permissions**: Ensure that your IBM Cloud account has the necessary permissions to manage the specified resources.
-- **Required dependencies**: Enable [Instance Metada Service](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-configure-service&interface=ui) on Both Enpoints
-- **Optional dependencies**: Enable [Trusted profile](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-trusted-profile-metadata&interface=ui) to avoid using and api access key
-   
+- **Required Dependencies**: Enable [Instance Metadata Service](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-configure-service&interface=ui) on both endpoints.
+- **Optional Dependencies**: Enable [Trusted Profile](https://cloud.ibm.com/docs/vpc?topic=vpc-imd-trusted-profile-metadata&interface=ui) to avoid using an API access key.
 
-
-For further assistance, please check the [GitHub Issues](https://github.com/gampel/ibm_cloud_fail_over/issues) page or contact the project maintainer.
+For further assistance, please check the [GitHub Issues](https://github.com/IBM/ibm_cloud_fail_over/issues) page or contact the project maintainer.
 
 ## Contributing
 
@@ -274,13 +296,8 @@ We welcome contributions! To contribute to the project, please follow these step
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## Contact
 
 For questions or support, please open an issue on GitHub or contact the project maintainer at [dev@gampel.net](mailto:dev@gampel.net).
-
-```
-
-### TOOD:
- 
