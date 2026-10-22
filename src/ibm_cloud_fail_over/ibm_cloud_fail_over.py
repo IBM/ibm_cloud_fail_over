@@ -70,6 +70,7 @@ class HAFailOver():
     def __init__(self) -> None:
         """Initialize the HAFailOver instance."""
         self.logger("--------Constructor---------")
+        self.logger("--------Version: 1.0.27")
         if self.apikey is None:
             self.logger("--------_parse_config")
             self._parse_config()
@@ -169,16 +170,21 @@ class HAFailOver():
         self.logger("Calling update OS routes.")
         self.logger(f"Command: {cmd}")
 
-        if not self.vip_addresses:
+        valid_vip_addresses = [v for v in self.vip_addresses if v]
+        if not valid_vip_addresses:
             return
 
         op = 'add' if cmd == 'SET' else 'del'
 
-        for vip_address in self.vip_addresses:
-            try:
-                subprocess.run(['ip', 'addr', op, vip_address, 'dev', self.interface_name], check=True)
-            except subprocess.CalledProcessError as e:
-                self.logger(f"Error updating OS routes: {e}")
+        for vip_address in valid_vip_addresses:
+            prefix = vip_address if '/' in vip_address else f'{vip_address}/32'
+            result = subprocess.run(['ip', 'addr', op, prefix, 'dev', self.interface_name])
+            if result.returncode != 0:
+                if op == 'add' and result.returncode == 2:
+                    self.logger(f"{prefix} already assigned to {self.interface_name}, continuing")
+                else:
+                    self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
+                    raise subprocess.CalledProcessError(result.returncode, result.args)
 
     def update_vpc_routing_table_route(self, cmd, ingress_types=None):
         """Update VPC routing table route.
@@ -297,7 +303,8 @@ class HAFailOver():
                                 self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
 
             self.logger(f"Returning updated next hop: {self.update_next_hop_vsi}")
-            self._update_os_routes(cmd)
+            if cmd in ('SET', 'UNSET'):
+                self._update_os_routes(cmd)
             return self.update_next_hop_vsi
 
         except ApiException as e:
@@ -575,7 +582,7 @@ class HAFailOver():
             message (str): Message to log
         """
         if self.DEBUG:
-            print(message)
+            print(message, file=sys.stderr)
 
     def find_the_current_and_next_hop_ip(self, route_address):
         """Find current and next hop IP addresses.
