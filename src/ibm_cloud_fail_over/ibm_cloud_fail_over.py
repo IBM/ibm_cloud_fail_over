@@ -18,15 +18,17 @@
 
 This module provides functions for handling failover operations in IBM Cloud VPC.
 """
-
-import http.client
-import json
-import sys
 import socket
-import subprocess
+import sys
+
+from http.client import HTTPConnection, HTTPSConnection
+from json import dumps, loads
+from importlib.metadata import version as v
 from ipaddress import ip_network
-from typing import Tuple, Optional
 from os import environ as env
+from subprocess import CalledProcessError, run
+from typing import Tuple, Optional
+
 from dotenv import load_dotenv
 from ibm_cloud_sdk_core import ApiException
 
@@ -70,7 +72,7 @@ class HAFailOver():
     def __init__(self) -> None:
         """Initialize the HAFailOver instance."""
         self.logger("--------Constructor---------")
-        self.logger("--------Version: 1.0.27")
+        self.logger(f"--------Version: {v('ibm_cloud_fail_over')}")
         if self.apikey is None:
             self.logger("--------_parse_config")
             self._parse_config()
@@ -93,7 +95,7 @@ class HAFailOver():
         conn = None
         try:
             vpc_host = self.vpc_url.replace('https://', '')
-            conn = http.client.HTTPSConnection(vpc_host)
+            conn = HTTPSConnection(vpc_host)
 
             # Set up default headers
             default_headers = {
@@ -119,7 +121,7 @@ class HAFailOver():
                 # For DELETE operations, 204 No Content is a success
                 if response.status == 204:
                     return {}
-                return json.loads(response_data) if response_data else {}
+                return loads(response_data) if response_data else {}
 
             # Handle error responses - always raise exception for non-success status
             raise ApiException(f"API request failed: {response.status} {response.reason}\nResponse: {response_data}")
@@ -170,7 +172,7 @@ class HAFailOver():
         self.logger("Calling update OS routes.")
         self.logger(f"Command: {cmd}")
 
-        valid_vip_addresses = [v for v in self.vip_addresses if v]
+        valid_vip_addresses = [vip for vip in self.vip_addresses if vip]
         if not valid_vip_addresses:
             return
 
@@ -178,13 +180,13 @@ class HAFailOver():
 
         for vip_address in valid_vip_addresses:
             prefix = vip_address if '/' in vip_address else f'{vip_address}/32'
-            result = subprocess.run(['ip', 'addr', op, prefix, 'dev', self.interface_name])
+            result = run(['ip', 'addr', op, prefix, 'dev', self.interface_name], check=False)
             if result.returncode != 0:
                 if op == 'add' and result.returncode == 2:
                     self.logger(f"{prefix} already assigned to {self.interface_name}, continuing")
                 else:
                     self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
-                    raise subprocess.CalledProcessError(result.returncode, result.args)
+                    raise CalledProcessError(result.returncode, result.args)
 
     def update_vpc_routing_table_route(self, cmd, ingress_types=None):
         """Update VPC routing table route.
@@ -273,7 +275,7 @@ class HAFailOver():
                                 self._make_api_request(
                                     "PATCH",
                                     f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes/{route['id']}?version={self.API_VERSION}&generation=2",
-                                    body=json.dumps(route_patch)
+                                    body=dumps(route_patch)
                                 )
                                 self.logger(f"Successfully updated route {route['id']} to use next hop {self.update_next_hop_vsi}")
                             else:
@@ -298,7 +300,7 @@ class HAFailOver():
                                 self._make_api_request(
                                     "POST",
                                     f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes?version={self.API_VERSION}&generation=2",
-                                    body=json.dumps(new_route)
+                                    body=dumps(new_route)
                                 )
                                 self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
 
@@ -332,11 +334,11 @@ class HAFailOver():
         connection = self._get_metadata_connection()
         return self._get_iam_token_from_tp(connection)
 
-    def _get_iam_token_from_tp(self, connection: http.client.HTTPSConnection):
+    def _get_iam_token_from_tp(self, connection: HTTPSConnection):
         """Get IAM token from trusted profile.
 
         Args:
-            connection (http.client.HTTPSConnection): HTTPS connection to metadata service
+            connection (HTTPSConnection): HTTPS connection to metadata service
 
         Raises:
             ApiException: If access token cannot be retrieved
@@ -348,7 +350,7 @@ class HAFailOver():
         connection.request("POST",
                            self._get_metadata_iam_token_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         if 'access_token' not in response:
             self.logger(response)
             self.logger('Can not get access token from trusted profile.'
@@ -357,11 +359,11 @@ class HAFailOver():
                             'Review if a TP is bound to the instance.')
         return f"Bearer {response['access_token']}"
 
-    def _get_metadata_token(self, connection: http.client.HTTPSConnection):
+    def _get_metadata_token(self, connection: HTTPSConnection):
         """Get metadata token.
 
         Args:
-            connection (http.client.HTTPSConnection): HTTPS connection to metadata service
+            connection (HTTPSConnection): HTTPS connection to metadata service
 
         Returns:
             str: Metadata access token
@@ -370,7 +372,7 @@ class HAFailOver():
                            self._get_metadata_token_path(),
                            body=self._get_metadata_body(),
                            headers=self._get_metadata_headers())
-        return json.loads(connection.getresponse().read().decode("utf-8"))['access_token']
+        return loads(connection.getresponse().read().decode("utf-8"))['access_token']
 
     def _get_metadata_token_path(self):
         """Get metadata token path.
@@ -418,7 +420,7 @@ class HAFailOver():
         Returns:
             str: JSON string with metadata request body
         """
-        return json.dumps({
+        return dumps({
             "expires_in": 3600
         })
 
@@ -453,13 +455,13 @@ class HAFailOver():
             ApiException: If metadata service is not accessible
 
         Returns:
-            http.client.HTTPConnection / http.client.HTTPSConnection: Connection to metadata service
+            HTTPConnection / HTTPSConnection: Connection to metadata service
         """
         connection = None
         if self._check_connectivity(self.METADATA_HOST, 80):
-            connection = http.client.HTTPConnection(self.METADATA_HOST)
+            connection = HTTPConnection(self.METADATA_HOST)
         elif self._check_connectivity(self.METADATA_HOST, 443):
-            connection = http.client.HTTPSConnection(self.METADATA_HOST)
+            connection = HTTPSConnection(self.METADATA_HOST)
         if connection is None:
             self.logger("Activate metadata at VSI instance please!"
                         "and be sure that a TP is bound to the instance")
@@ -474,7 +476,7 @@ class HAFailOver():
             str: Bearer token
         """
         # URL for token
-        conn = http.client.HTTPSConnection("private.iam.cloud.ibm.com")
+        conn = HTTPSConnection("private.iam.cloud.ibm.com")
         # Payload for retrieving token. Note: An API key will need to be generated and replaced here
         payload = (
             "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey="
@@ -498,7 +500,7 @@ class HAFailOver():
             data = res.decode("utf-8")
 
             # Format response in JSON
-            json_res = json.loads(data)
+            json_res = loads(data)
 
             # Concatenate token type and token value
             return json_res["token_type"] + " " + json_res["access_token"]
@@ -614,7 +616,7 @@ class HAFailOver():
         connection.request("GET",
                            self._get_metadata_istance_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
     def get_instance_interface_metadata(self):
@@ -628,7 +630,7 @@ class HAFailOver():
         connection.request("GET",
                            self._get_metadata_istance_network_int_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
     def get_vni_metadata(self):
@@ -642,7 +644,7 @@ class HAFailOver():
         connection.request("GET",
                            self._get_metadata_vni_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
     def get_next_hop_for_cidr(self, cidr: str, api_version: str = "2026-06-01",
@@ -834,7 +836,7 @@ class HAFailOver():
         self.logger(f"VPC_URL: {self.vpc_url}")
 
         try:
-            conn = http.client.HTTPSConnection(self.vpc_url.replace('https://', ''))
+            conn = HTTPSConnection(self.vpc_url.replace('https://', ''))
             headers = {
                 'Authorization': self.get_token(),
                 'Content-Type': 'application/json',
@@ -852,7 +854,7 @@ class HAFailOver():
             if response.status != 200:
                 raise ApiException(f"Failed to get public address range: {response.status} {response.reason}")
 
-            range_info = json.loads(response.read().decode("utf-8"))
+            range_info = loads(response.read().decode("utf-8"))
             self.logger(f"Range information: {range_info}")
             return range_info
         except Exception as e:
@@ -874,7 +876,7 @@ class HAFailOver():
             ApiException: If there is an error updating the range
         """
         self.logger("Updating public address range target zone")
-        conn = http.client.HTTPSConnection(self.vpc_url.replace('https://', ''))
+        conn = HTTPSConnection(self.vpc_url.replace('https://', ''))
         try:
             headers = {
                 'Authorization': self.get_token(),
@@ -899,13 +901,13 @@ class HAFailOver():
             self.logger(f"Update range_patch_model: {range_patch_model}")
             conn.request("PATCH",
                         f"/v1/public_address_ranges/{range_id}?version={api_version}&generation={generation}{maturity_param}",
-                        body=json.dumps(range_patch_model),
+                        body=dumps(range_patch_model),
                         headers=headers)
 
             response = conn.getresponse()
             if response.status != 200:
                 raise ApiException(f"Failed to update public address range: {response.status} {response.reason}")
-            updated_range = json.loads(response.read().decode("utf-8"))
+            updated_range = loads(response.read().decode("utf-8"))
             self.logger(f"Update response: {updated_range}")
             self.logger("Successfully updated public address range")
             return updated_range
@@ -1001,7 +1003,7 @@ class HAFailOver():
 
             # Set up HTTP connection
             vpc_host = self.vpc_url.replace('https://', '')
-            conn = http.client.HTTPSConnection(vpc_host)
+            conn = HTTPSConnection(vpc_host)
 
             # Set up headers
             headers = {
@@ -1020,7 +1022,7 @@ class HAFailOver():
             if response.status != 200:
                 raise ApiException(f"Failed to get routing tables: {response.status} {response.reason}")
 
-            list_tables = json.loads(response.read().decode("utf-8"))
+            list_tables = loads(response.read().decode("utf-8"))
 
             if not list_tables or "routing_tables" not in list_tables:
                 raise ApiException(f"No routing tables found for VPC {self.vpc_id}")
@@ -1041,7 +1043,7 @@ class HAFailOver():
                     if response.status != 200:
                         raise ApiException(f"Failed to get routes: {response.status} {response.reason}")
 
-                    routes = json.loads(response.read().decode("utf-8"))["routes"]
+                    routes = loads(response.read().decode("utf-8"))["routes"]
 
                     # Check each route for the next hop IP
                     for route in routes:
@@ -1306,8 +1308,7 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_
 
 def usage_fip():
     """Print usage information for floating IP commands."""
-    print("{0} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]"f'{sys.argv[0]}')
-    print("\n")
+    print(f"{sys.argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
 
 def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "", api_key: str = "") -> bool:
     """Check if a specific next hop IP is used in the internet ingress routing table.

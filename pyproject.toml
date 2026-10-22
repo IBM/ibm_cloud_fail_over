@@ -28,6 +28,7 @@ disable = [
     "C0302", # too-many-lines
     "R0902", # too-many-instance-attributes
     "R0913", # too-many-arguments
+    "R0915", # too-many-statements
     "R0917", # too-many-positional-arguments
     "R1702", # too-many-nested blocks
 ]
