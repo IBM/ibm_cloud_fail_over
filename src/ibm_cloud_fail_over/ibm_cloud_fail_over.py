@@ -218,6 +218,10 @@ class HAFailOver():
             ingress_types = ['route_direct_link_ingress', 'route_transit_gateway_ingress', 'route_internet_ingress']
         self.logger(f"Using ingress types: {ingress_types}")
 
+        if cmd == "UNSET":
+            self._update_os_routes(cmd)
+            return ''
+
         try:
             # Get all routing tables
             self.logger("Getting routing tables...")
@@ -306,7 +310,7 @@ class HAFailOver():
                                 self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
 
             self.logger(f"Returning updated next hop: {self.update_next_hop_vsi}")
-            if cmd in ('SET', 'UNSET'):
+            if cmd == "SET":
                 self._update_os_routes(cmd)
             return self.update_next_hop_vsi
 
