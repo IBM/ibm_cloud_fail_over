@@ -23,6 +23,7 @@ import http.client
 import json
 import sys
 import socket
+import subprocess
 from ipaddress import ip_network
 from typing import Tuple, Optional
 from os import environ as env
