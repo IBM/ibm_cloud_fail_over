@@ -1157,7 +1157,7 @@ def fail_over(cmd):
     """
     ha_fail_over = HAFailOver()
     # self.logger("Request received from: " + remote_addr)
-    ip_a = subprocess.run(['ip', 'a'], capture_output=True, text=True).stdout
+    ip_a = subprocess.run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
     if ha_fail_over.ext_ip_1 in ip_a:
         ha_fail_over.local_ip = ha_fail_over.ext_ip_1
     elif ha_fail_over.ext_ip_2 in ip_a:
