@@ -61,6 +61,7 @@ class HAFailOver():
     ext_ip_1 = ""
     ext_ip_2 = ""
     vsi_local_az = ""
+    local_ip = ""
     DEBUG = False
     #DEBUG = True
 
@@ -557,7 +558,11 @@ class HAFailOver():
         Args:
             route_address (str): Current route address
         """
-        if route_address == self.ext_ip_1:
+        if self.local_ip:
+            # Point VPC route to this node explicitly
+            self.update_next_hop_vsi = self.local_ip
+            self.next_hop_vsi = route_address
+        elif route_address == self.ext_ip_1:
             # To be updated with IP address.
             self.update_next_hop_vsi = self.ext_ip_2
             # Current Hop IP address.
@@ -1151,6 +1156,11 @@ def fail_over(cmd):
     """
     ha_fail_over = HAFailOver()
     # self.logger("Request received from: " + remote_addr)
+    ip_a = subprocess.run(['ip', 'a'], capture_output=True, text=True).stdout
+    if ha_fail_over.ext_ip_1 in ip_a:
+        ha_fail_over.local_ip = ha_fail_over.ext_ip_1
+    elif ha_fail_over.ext_ip_2 in ip_a:
+        ha_fail_over.local_ip = ha_fail_over.ext_ip_2
     made_update = ha_fail_over.update_vpc_routing_table_route(cmd)
     return "Updated Custom Route: " + str(made_update)
 
