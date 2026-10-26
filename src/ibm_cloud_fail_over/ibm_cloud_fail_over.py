@@ -142,6 +142,12 @@ class HAFailOver():
             cmd (str): 'add' or 'remove'
             vni_id (str): VNI ID
             fip_id (str): Floating IP ID
+
+        Returns:
+            bool: True if the operation was successful
+
+        Raises:
+            ApiException: If there is an error updating the floating IP
         """
         self.logger("Calling update vpc routing table route method VIP.")
         self.logger(f"VPC ID: {self.vpc_id}")
@@ -169,6 +175,9 @@ class HAFailOver():
 
         Args:
             cmd (str): 'SET' or 'UNSET'
+
+        Raises:
+            CalledProcessError: If the ip command fails with a non-recoverable error
         """
         self.logger("Calling update OS routes.")
         self.logger(f"Command: {cmd}")
@@ -181,7 +190,7 @@ class HAFailOver():
 
         for vip_address in valid_vip_addresses:
             prefix = vip_address if '/' in vip_address else f'{vip_address}/32'
-            result = run(['ip', 'addr', op, prefix, 'dev', self.interface_name], check=False)
+            result = run(['ip', 'a', op, prefix, 'dev', self.interface_name], check=False)
             if result.returncode != 0:
                 if op == 'add' and result.returncode == 2:
                     self.logger(f"{prefix} already assigned to {self.interface_name}, continuing")
@@ -190,10 +199,13 @@ class HAFailOver():
                     raise CalledProcessError(result.returncode, result.args)
 
     def update_vpc_routing_table_route(self, cmd, ingress_types=None):
-        """Update VPC routing table route.
+        """Update VPC routing table route and optionally manage local OS routes.
 
         Args:
-            cmd (str): 'SET' or 'GET' or 'UNSET'
+            cmd (str): 'SET', 'GET', or 'UNSET'
+                - 'SET': Update VPC routes and add VIP addresses to local interface
+                - 'GET': Return current next hop without making changes
+                - 'UNSET': Remove VIP addresses from local interface (no VPC update)
             ingress_types (list, optional): List of ingress types to update. Can include:
                 - 'route_internet_ingress'
                 - 'route_direct_link_ingress'
@@ -201,7 +213,10 @@ class HAFailOver():
                 Defaults to ['route_direct_link_ingress', 'route_transit_gateway_ingress', 'route_internet_ingress']
 
         Returns:
-            str: Updated next hop IP
+            str: Updated next hop IP address, or empty string for UNSET command
+
+        Raises:
+            ApiException: If there is an error updating the routing table route
         """
         self.logger("Calling update vpc routing table route method VIP.")
         self.logger(f"VPC ID: {self.vpc_id}")
@@ -319,10 +334,13 @@ class HAFailOver():
             raise
 
     def get_token(self):
-        """Get Token
+        """Get authentication token for IBM Cloud API.
 
         Returns:
-            str: Returning the access token
+            str: Bearer token for API authentication
+
+        Raises:
+            ApiException: If token cannot be retrieved from either API key or trusted profile
         """
         if self.apikey is not None:
             self.logger("------apikey path")
@@ -335,6 +353,9 @@ class HAFailOver():
 
         Returns:
             str: Bearer token
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         return self._get_iam_token_from_tp(connection)
@@ -479,6 +500,9 @@ class HAFailOver():
 
         Returns:
             str: Bearer token
+
+        Raises:
+            Exception: If there is an error retrieving the token
         """
         # URL for token
         conn = HTTPSConnection("private.iam.cloud.ibm.com")
@@ -547,7 +571,11 @@ class HAFailOver():
         raise ApiException("Please!!! provide " + missing_parameter)
 
     def _parse_config(self):
-        """Parse configuration from environment variables."""
+        """Parse configuration from environment variables.
+
+        Logs errors if VPC_URL is missing but does not raise exceptions.
+        Sets instance variables from environment: apikey, vpc_id, vpc_url, vsi_local_az, ext_ip_1, ext_ip_2.
+        """
 
         try:
             self.logger(env)
@@ -594,6 +622,9 @@ class HAFailOver():
     def find_the_current_and_next_hop_ip(self, route_address):
         """Find current and next hop IP addresses.
 
+        Sets the instance variables next_hop_vsi and update_next_hop_vsi based on
+        the current route address and configured external IPs.
+
         Args:
             route_address (str): Current route address
         """
@@ -618,7 +649,10 @@ class HAFailOver():
         """Get instance metadata from metadata service.
 
         Returns:
-            dict: Instance metadata
+            dict: Instance metadata including VPC ID, zone, and other instance information
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
@@ -632,7 +666,10 @@ class HAFailOver():
         """Get instance network interface metadata from metadata service.
 
         Returns:
-            dict: Instance network interface metadata
+            dict: Instance network interface metadata including floating IPs and network configuration
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
@@ -646,7 +683,10 @@ class HAFailOver():
         """Get virtual network interface metadata from metadata service.
 
         Returns:
-            dict: Virtual network interface metadata
+            dict: Virtual network interface metadata including VNI IDs and configuration
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
@@ -657,7 +697,7 @@ class HAFailOver():
         return response
 
     def get_next_hop_for_cidr(self, cidr: str, api_version: str = "2026-06-01",
-                             maturity: Optional[str] = None, generation: str = "2") -> str:
+                             maturity: Optional[str] = None, generation: str = "2") -> Optional[str]:
         """Get the next hop IP address for a given CIDR in the internet ingress routing table.
 
         Args:
@@ -667,7 +707,7 @@ class HAFailOver():
             generation (str, optional): API generation. Defaults to "2".
 
         Returns:
-            str: The next hop IP address for the route matching the CIDR, or None if not found
+            Optional[str]: The next hop IP address for the route matching the CIDR, or None if not found
 
         Raises:
             ApiException: If there is an error getting the next hop
@@ -764,7 +804,7 @@ class HAFailOver():
         return None
 
     def get_next_hop_for_par(self, range_id: str, api_version: str = "2026-06-01",
-                            maturity: Optional[str] = None, generation: str = "2") -> str:
+                            maturity: Optional[str] = None, generation: str = "2") -> Optional[str]:
         """Get the next hop IP address for a public address range.
 
         Args:
@@ -774,7 +814,7 @@ class HAFailOver():
             generation (str, optional): API generation. Defaults to "2".
 
         Returns:
-            str: The next hop IP address for the route, or None if not found
+            Optional[str]: The next hop IP address for the route, or None if not found
 
         Raises:
             ApiException: If there is an error getting the next hop
@@ -1075,7 +1115,7 @@ class HAFailOver():
 
 def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
                         api_version: str = "2026-06-01", maturity: Optional[str] = None,
-                        generation: str = "2") -> str:
+                        generation: str = "2") -> Optional[str]:
     """Get the next hop IP address for a public address range.
 
     Args:
@@ -1087,7 +1127,7 @@ def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
         generation (str, optional): API generation. Defaults to "2".
 
     Returns:
-        str: The next hop IP address for the route, or None if not found
+        Optional[str]: The next hop IP address for the route, or None if not found
 
     Raises:
         ApiException: If there is an error getting the next hop
@@ -1118,7 +1158,10 @@ def fail_over_public_address_range(range_id, vpc_url="", api_key="", api_version
         nexthop_ip_2 (str, optional): IP address of the second VSI. Defaults to "".
 
     Returns:
-        dict: The updated public address range information if updated, None if no update needed
+        Optional[dict]: The updated public address range information if updated, None if no update needed
+
+    Raises:
+        ApiException: If VPC ID cannot be retrieved, required parameters are missing, or there is an error updating the range
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1157,17 +1200,20 @@ def fail_over_check_par_zone_compatibility(
     """Check if the public address range and VSI are in the same zone.
 
     Args:
-        range_id: The ID of the public address range to check
-        vpc_url: IBM Cloud VPC regional URL
-        api_key: IBM Cloud API key
-        api_version: API version to use
-        maturity: API maturity level
-        generation: API generation
+        range_id (str): The ID of the public address range to check
+        vpc_url (str, optional): IBM Cloud VPC regional URL. Defaults to "".
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
+        api_version (str, optional): API version to use. Defaults to "2026-06-01".
+        maturity (str, optional): API maturity level. Defaults to "ga".
+        generation (str, optional): API generation. Defaults to "2".
 
     Returns:
-        A tuple containing:
+        Tuple[bool, str]: A tuple containing:
             - bool: True if zones match, False otherwise
             - str: Current zone name
+
+    Raises:
+        ApiException: If there is an error checking zone compatibility
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1188,14 +1234,16 @@ def fail_over(cmd):
     """Execute failover operation.
 
     Args:
-        cmd (str): GET or SET
+        cmd (str): Command to execute - 'GET' to retrieve current next hop, 'SET' to update routing
 
     Returns:
-        str: Status message
+        str: Status message indicating the updated custom route
+
+    Raises:
+        ApiException: If there is an error during the failover operation
     """
     ha_fail_over = HAFailOver()
-    # self.logger("Request received from: " + remote_addr)
-    ip_a = subprocess.run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
+    ip_a = run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
     if ha_fail_over.ext_ip_1 in ip_a:
         ha_fail_over.local_ip = ha_fail_over.ext_ip_1
     elif ha_fail_over.ext_ip_2 in ip_a:
@@ -1207,25 +1255,31 @@ def fail_over_fip(cmd, vni_id, fip_id):
     """Execute floating IP failover.
 
     Args:
-        cmd (str): add or remove
-        vni_id (str): VNI UUID
+        cmd (str): Command to execute - 'add' to attach or 'remove' to detach floating IP
+        vni_id (str): Virtual Network Interface UUID
         fip_id (str): Floating IP UUID
+
+    Raises:
+        ApiException: If there is an error updating the floating IP attachment
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.update_vpc_fip(cmd, vni_id, fip_id)
 
 def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
-    """Stop floating IP failover.
+    """Stop floating IP failover by removing the floating IP from the local VNI.
 
     Args:
         vpc_url (str): IBM Cloud VPC regional URL
-        vni_id_1 (str): First VNI ID
-        vni_id_2 (str): Second VNI ID
-        fip_id (str): Floating IP ID
-        api_key (str, optional): IBM Cloud API key
+        vni_id_1 (str): First Virtual Network Interface ID
+        vni_id_2 (str): Second Virtual Network Interface ID
+        fip_id (str): Floating IP ID to detach
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
 
     Returns:
-        tuple: Floating IP ID and IP address
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error removing the floating IP or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1240,17 +1294,20 @@ def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
     return fip_id, fip_ip
 
 def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
-    """Start floating IP failover.
+    """Start floating IP failover by attaching the floating IP to the local VNI.
 
     Args:
         vpc_url (str): IBM Cloud VPC regional URL
-        vni_id_1 (str): First VNI ID
-        vni_id_2 (str): Second VNI ID
-        fip_id (str): Floating IP ID
-        api_key (str, optional): IBM Cloud API key
+        vni_id_1 (str): First Virtual Network Interface ID
+        vni_id_2 (str): Second Virtual Network Interface ID
+        fip_id (str): Floating IP ID to attach
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
 
     Returns:
-        tuple: Floating IP ID and IP address
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error attaching the floating IP or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1272,13 +1329,16 @@ def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key="")
     return fip_id, fip_ip
 
 def fail_over_get_attached_fip(api_key):
-    """Get attached floating IP information.
+    """Get attached floating IP information from instance metadata.
 
     Args:
         api_key (str): IBM Cloud API key
 
     Returns:
-        tuple: Floating IP ID and IP address, or (None, None) if not found
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error accessing instance metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.apikey = api_key
@@ -1294,15 +1354,19 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_
     """Execute custom route VIP failover.
 
     Args:
-        cmd (str): SET or GET
-        vpc_url (str): IBM cloud regional VPC URL
-        ext_ip_1 (str): IP of the first VSI
-        ext_ip_2 (str): IP of the second VSI
-        api_key (str): IBM Cloud API key
-        interface_name (string): Local network interface to assign vip_addresses to
-        vip_addresses (string): Comma-separated VIP addresses to assign locally
+        cmd (str): Command to execute - 'SET' to update routes and assign VIPs, 'GET' to retrieve current next hop
+        vpc_url (str): IBM Cloud regional VPC URL
+        ext_ip_1 (str): IP address of the first VSI
+        ext_ip_2 (str): IP address of the second VSI
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
+        interface_name (str, optional): Local network interface to assign vip_addresses to. Defaults to "".
+        vip_addresses (str, optional): Comma-separated VIP addresses to assign locally. Defaults to "".
+
     Returns:
         str: Next hop IP address
+
+    Raises:
+        ApiException: If there is an error during the failover operation or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1321,7 +1385,7 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_
     return next_hop
 
 def usage_fip():
-    """Print usage information for floating IP commands."""
+    """Print usage information for floating IP commands to stdout."""
     print(f"{sys.argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
 
 def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "", api_key: str = "") -> bool:
