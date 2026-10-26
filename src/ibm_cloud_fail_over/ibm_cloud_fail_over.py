@@ -135,7 +135,7 @@ class HAFailOver():
             if conn is not None:
                 conn.close()
 
-    def update_vpc_fip(self, cmd, vni_id, fip_id):
+    def update_vpc_fip(self, cmd: str, vni_id: str, fip_id: str) -> bool:
         """Update floating IP attachment.
 
         Args:
@@ -170,7 +170,7 @@ class HAFailOver():
             self.logger(f"Error updating floating IP: {e}")
             raise
 
-    def _update_os_routes(self, cmd):
+    def _update_os_routes(self, cmd: str) -> None:
         """Update local OS routes.
 
         Args:
@@ -198,7 +198,7 @@ class HAFailOver():
                     self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
                     raise CalledProcessError(result.returncode, result.args)
 
-    def update_vpc_routing_table_route(self, cmd, ingress_types=None):
+    def update_vpc_routing_table_route(self, cmd: str, ingress_types: Optional[list] = None) -> str:
         """Update VPC routing table route and optionally manage local OS routes.
 
         Args:
@@ -333,7 +333,7 @@ class HAFailOver():
             self.logger(f"Error updating routing table route: {e}")
             raise
 
-    def get_token(self):
+    def get_token(self) -> str:
         """Get authentication token for IBM Cloud API.
 
         Returns:
@@ -348,7 +348,7 @@ class HAFailOver():
         self.logger("------trusted profile path")
         return self._get_token_from_tp()
 
-    def _get_token_from_tp(self):
+    def _get_token_from_tp(self) -> str:
         """Get token from trusted profile.
 
         Returns:
@@ -360,7 +360,7 @@ class HAFailOver():
         connection = self._get_metadata_connection()
         return self._get_iam_token_from_tp(connection)
 
-    def _get_iam_token_from_tp(self, connection: HTTPSConnection):
+    def _get_iam_token_from_tp(self, connection: HTTPSConnection) -> str:
         """Get IAM token from trusted profile.
 
         Args:
@@ -385,7 +385,7 @@ class HAFailOver():
                             'Review if a TP is bound to the instance.')
         return f"Bearer {response['access_token']}"
 
-    def _get_metadata_token(self, connection: HTTPSConnection):
+    def _get_metadata_token(self, connection: HTTPSConnection) -> str:
         """Get metadata token.
 
         Args:
@@ -400,7 +400,7 @@ class HAFailOver():
                            headers=self._get_metadata_headers())
         return loads(connection.getresponse().read().decode("utf-8"))['access_token']
 
-    def _get_metadata_token_path(self):
+    def _get_metadata_token_path(self) -> str:
         """Get metadata token path.
 
         Returns:
@@ -408,7 +408,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_PATH}token?version={self.METADATA_VERSION}"
 
-    def _get_metadata_istance_network_int_path(self):
+    def _get_metadata_istance_network_int_path(self) -> str:
         """Get metadata instance network interface path.
 
         Returns:
@@ -416,7 +416,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_INSTACE_NETWORK_INT_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_vni_path(self):
+    def _get_metadata_vni_path(self) -> str:
         """Get metadata VNI path.
 
         Returns:
@@ -424,7 +424,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_VNI_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_istance_path(self):
+    def _get_metadata_istance_path(self) -> str:
         """Get metadata instance path.
 
         Returns:
@@ -432,7 +432,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_INSTACE_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_iam_token_path(self):
+    def _get_metadata_iam_token_path(self) -> str:
         """Get metadata IAM token path.
 
         Returns:
@@ -440,7 +440,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_PATH}iam_token?version={self.METADATA_VERSION}"
 
-    def _get_metadata_body(self):
+    def _get_metadata_body(self) -> str:
         """Get metadata request body.
 
         Returns:
@@ -461,7 +461,7 @@ class HAFailOver():
             'Accept': 'application/json'
         }
 
-    def _get_metadata_headers_iam(self, metadata_token) -> dict:
+    def _get_metadata_headers_iam(self, metadata_token: str) -> dict:
         """Get metadata IAM request headers.
 
         Args:
@@ -474,7 +474,7 @@ class HAFailOver():
         headers['Authorization'] = f"Bearer {metadata_token}"
         return headers
 
-    def _get_metadata_connection(self):
+    def _get_metadata_connection(self) -> HTTPConnection | HTTPSConnection:
         """Get metadata service connection.
 
         Raises:
@@ -495,7 +495,7 @@ class HAFailOver():
                             "and be sure that a TP is bound to the instance")
         return connection
 
-    def _get_token_from_apikey(self):
+    def _get_token_from_apikey(self) -> str:
         """Get token from API key.
 
         Returns:
@@ -539,7 +539,7 @@ class HAFailOver():
             self.logger(f"Error getting token. {error}")
             raise
 
-    def _check_connectivity(self, ip, port):
+    def _check_connectivity(self, ip: str, port: int) -> bool:
         """Check connectivity to a host and port.
 
         Args:
@@ -559,7 +559,7 @@ class HAFailOver():
             self.logger(f"Failed to connect to {ip}:{port}: {e}")
         return False
 
-    def _parameter_exception(self, missing_parameter):
+    def _parameter_exception(self, missing_parameter: str) -> None:
         """Raise an exception for missing parameter.
 
         Args:
@@ -570,7 +570,7 @@ class HAFailOver():
         """
         raise ApiException("Please!!! provide " + missing_parameter)
 
-    def _parse_config(self):
+    def _parse_config(self) -> None:
         """Parse configuration from environment variables.
 
         Logs errors if VPC_URL is missing but does not raise exceptions.
@@ -610,7 +610,7 @@ class HAFailOver():
         except ApiException as e:
             self.logger(e)
 
-    def logger(self, message):
+    def logger(self, message: str) -> None:
         """Log a message if DEBUG is enabled.
 
         Args:
@@ -619,7 +619,7 @@ class HAFailOver():
         if self.DEBUG:
             print(message, file=sys.stderr)
 
-    def find_the_current_and_next_hop_ip(self, route_address):
+    def find_the_current_and_next_hop_ip(self, route_address: str) -> None:
         """Find current and next hop IP addresses.
 
         Sets the instance variables next_hop_vsi and update_next_hop_vsi based on
@@ -645,7 +645,7 @@ class HAFailOver():
         self.logger("Current next hop IP is: " + self.next_hop_vsi)
         self.logger("Update next hop IP to: " + self.update_next_hop_vsi)
 
-    def get_instance_metadata(self):
+    def get_instance_metadata(self) -> dict:
         """Get instance metadata from metadata service.
 
         Returns:
@@ -662,7 +662,7 @@ class HAFailOver():
         response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
-    def get_instance_interface_metadata(self):
+    def get_instance_interface_metadata(self) -> dict:
         """Get instance network interface metadata from metadata service.
 
         Returns:
@@ -679,7 +679,7 @@ class HAFailOver():
         response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
-    def get_vni_metadata(self):
+    def get_vni_metadata(self) -> dict:
         """Get virtual network interface metadata from metadata service.
 
         Returns:
@@ -865,7 +865,7 @@ class HAFailOver():
             self.logger(f"Error getting next hop for public address range: {e}")
             raise ApiException(f"Error getting next hop for public address range: {e}") from e
 
-    def get_public_address_range(self, range_id, api_version="2026-06-01", maturity: Optional[str] = None, generation="2"):
+    def get_public_address_range(self, range_id: str, api_version: str = "2026-06-01", maturity: Optional[str] = None, generation: str = "2") -> dict:
         """Get information about a public address range.
 
         Args:
@@ -909,7 +909,7 @@ class HAFailOver():
         except Exception as e:
             raise ApiException(f"Unexpected error: {e}") from e
 
-    def _update_range_zone(self, range_id, api_version, maturity, generation):
+    def _update_range_zone(self, range_id: str, api_version: str, maturity: Optional[str], generation: str) -> dict:
         """Update the zone of a public address range.
 
         Args:
@@ -998,8 +998,8 @@ class HAFailOver():
             self.logger(f"Error checking zone compatibility: {e}")
             raise ApiException(f"Error checking zone compatibility: {e}") from e
 
-    def update_public_address_range(self, range_id, api_version="2026-06-01",
-                                  maturity: Optional[str] = None, generation="2"):
+    def update_public_address_range(self, range_id: str, api_version: str = "2026-06-01",
+                                  maturity: Optional[str] = None, generation: str = "2") -> Optional[dict]:
         """Update the target zone of a public address range to match the VSI's local availability zone.
 
         Args:
@@ -1143,8 +1143,8 @@ def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
 
     return ha_fail_over.get_next_hop_for_par(range_id, api_version, maturity, generation)
 
-def fail_over_public_address_range(range_id, vpc_url="", api_key="", api_version="2026-06-01",
-                                 maturity: Optional[str] = None, generation="2", nexthop_ip_1="", nexthop_ip_2=""):
+def fail_over_public_address_range(range_id: str, vpc_url: str = "", api_key: str = "", api_version: str = "2026-06-01",
+                                 maturity: Optional[str] = None, generation: str = "2", nexthop_ip_1: str = "", nexthop_ip_2: str = "") -> Optional[dict]:
     """Update the target zone of a public address range to match the VSI's local availability zone.
 
     Args:
@@ -1230,7 +1230,7 @@ def fail_over_check_par_zone_compatibility(
         generation=generation
     )
 
-def fail_over(cmd):
+def fail_over(cmd: str) -> str:
     """Execute failover operation.
 
     Args:
@@ -1251,7 +1251,7 @@ def fail_over(cmd):
     made_update = ha_fail_over.update_vpc_routing_table_route(cmd)
     return "Updated Custom Route: " + str(made_update)
 
-def fail_over_fip(cmd, vni_id, fip_id):
+def fail_over_fip(cmd: str, vni_id: str, fip_id: str) -> None:
     """Execute floating IP failover.
 
     Args:
@@ -1265,7 +1265,7 @@ def fail_over_fip(cmd, vni_id, fip_id):
     ha_fail_over = HAFailOver()
     ha_fail_over.update_vpc_fip(cmd, vni_id, fip_id)
 
-def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
+def fail_over_floating_ip_stop(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_id: str, api_key: str = "") -> Tuple[Optional[str], Optional[str]]:
     """Stop floating IP failover by removing the floating IP from the local VNI.
 
     Args:
@@ -1293,7 +1293,7 @@ def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
     fip_id, fip_ip = fail_over_get_attached_fip(api_key)
     return fip_id, fip_ip
 
-def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
+def fail_over_floating_ip_start(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_id: str, api_key: str = "") -> Tuple[Optional[str], Optional[str]]:
     """Start floating IP failover by attaching the floating IP to the local VNI.
 
     Args:
@@ -1328,7 +1328,7 @@ def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key="")
     fip_id, fip_ip = fail_over_get_attached_fip(api_key)
     return fip_id, fip_ip
 
-def fail_over_get_attached_fip(api_key):
+def fail_over_get_attached_fip(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     """Get attached floating IP information from instance metadata.
 
     Args:
@@ -1350,7 +1350,7 @@ def fail_over_get_attached_fip(api_key):
             return attached_fip_id, attached_fip_ip
     return None , None
 
-def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_name="", vip_addresses=""):
+def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_key: str = "", interface_name: str = "", vip_addresses: str = "") -> str:
     """Execute custom route VIP failover.
 
     Args:
@@ -1384,7 +1384,7 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key="", interface_
     next_hop = ha_fail_over.update_vpc_routing_table_route(cmd)
     return next_hop
 
-def usage_fip():
+def usage_fip() -> None:
     """Print usage information for floating IP commands to stdout."""
     print(f"{sys.argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
 
