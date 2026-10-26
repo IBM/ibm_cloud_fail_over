@@ -1354,7 +1354,7 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
     """Execute custom route VIP failover.
 
     Args:
-        cmd (str): Command to execute - 'SET' to update routes and assign VIPs, 'GET' to retrieve current next hop
+        cmd (str): Command to execute - 'SET' to update routes and assign VIPs, 'GET' to retrieve current next hop, or 'UNSET' to remove VIPs
         vpc_url (str): IBM Cloud regional VPC URL
         ext_ip_1 (str): IP address of the first VSI
         ext_ip_2 (str): IP address of the second VSI
