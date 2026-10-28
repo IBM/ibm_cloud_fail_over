@@ -27,7 +27,7 @@ from importlib.metadata import version as v
 from ipaddress import ip_network
 from os import environ as env
 from subprocess import CalledProcessError, run
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 from dotenv import load_dotenv
 from ibm_cloud_sdk_core import ApiException
@@ -474,14 +474,14 @@ class HAFailOver():
         headers['Authorization'] = f"Bearer {metadata_token}"
         return headers
 
-    def _get_metadata_connection(self) -> HTTPConnection | HTTPSConnection:
+    def _get_metadata_connection(self) -> Union[HTTPConnection, HTTPSConnection]:
         """Get metadata service connection.
 
         Raises:
             ApiException: If metadata service is not accessible
 
         Returns:
-            HTTPConnection / HTTPSConnection: Connection to metadata service
+            HTTPConnection | HTTPSConnection: Connection to metadata service
         """
         connection = None
         if self._check_connectivity(self.METADATA_HOST, 80):
