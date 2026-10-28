@@ -18,16 +18,15 @@
 
 This module provides functions for handling failover operations in IBM Cloud VPC.
 """
-import socket
-import sys
-
 from http.client import HTTPConnection, HTTPSConnection
 from json import dumps, loads
 from importlib.metadata import version as v
 from ipaddress import ip_network
 from os import environ as env
+from socket import create_connection, timeout
 from subprocess import CalledProcessError, run
-from typing import Tuple, Optional, Union
+from sys import argv, stderr
+from typing import Optional, Tuple, Union
 
 from ibm_cloud_sdk_core import ApiException
 
@@ -471,6 +470,7 @@ class HAFailOver():
         headers['Authorization'] = f"Bearer {metadata_token}"
         return headers
 
+    # TODO (3.10): '|' is an alias for 'Union'. pylint: disable=fixme
     def _get_metadata_connection(self) -> Union[HTTPConnection, HTTPSConnection]:
         """Get metadata service connection.
 
@@ -547,12 +547,13 @@ class HAFailOver():
             bool: True if connection successful, False otherwise
         """
         try:
-            with socket.create_connection((ip, port), 5):
+            with create_connection((ip, port), 5):
                 self.logger(f"Successfully connected to {ip}:{port}")
                 return True
-        except socket.timeout:
+        # TODO (3.10): 'timeout' is an alias of TimeoutError. pylint: disable=fixme
+        except timeout:
             self.logger(f"Connection to {ip}:{port} timed out.")
-        except socket.error as e:
+        except OSError as e:
             self.logger(f"Failed to connect to {ip}:{port}: {e}")
         return False
 
@@ -614,7 +615,7 @@ class HAFailOver():
             message (str): Message to log
         """
         if self.DEBUG:
-            print(message, file=sys.stderr)
+            print(message, file=stderr)
 
     def find_the_current_and_next_hop_ip(self, route_address: str) -> None:
         """Find current and next hop IP addresses.
@@ -1383,7 +1384,7 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
 
 def usage_fip() -> None:
     """Print usage information for floating IP commands to stdout."""
-    print(f"{sys.argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
+    print(f"{argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
 
 def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "", api_key: str = "") -> bool:
     """Check if a specific next hop IP is used in the internet ingress routing table.
@@ -1411,11 +1412,11 @@ def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "
     return ha_fail_over.check_next_hop_in_internet_ingress(next_hop_ip)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
-        if sys.argv[1] == "FIP":
-            fail_over_fip(sys.argv[2], sys.argv[3], sys.argv[4])
-        elif sys.argv[1] == "ROUTE":
-            fail_over(sys.argv[2])
+    if len(argv) > 2:
+        if argv[1] == "FIP":
+            fail_over_fip(argv[2], argv[3], argv[4])
+        elif argv[1] == "ROUTE":
+            fail_over(argv[2])
     else:
         print(
             "Error must provide parameter usage: ibm_cloud_pacemaker_fail_over.py ROUTE GET|SET"
