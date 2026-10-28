@@ -166,8 +166,8 @@ class HAFailOver():
             self.logger(f"Error updating floating IP: {e}")
             raise
 
-    def _update_os_routes(self, cmd: str) -> None:
-        """Update local OS routes.
+    def _update_os_iface_vip_addresses(self, cmd: str) -> None:
+        """Update local OS network interface VIP addresses.
 
         Args:
             cmd (str): 'SET' or 'UNSET'
@@ -230,7 +230,7 @@ class HAFailOver():
         self.logger(f"Using ingress types: {ingress_types}")
 
         if cmd == "UNSET":
-            self._update_os_routes(cmd)
+            self._update_os_iface_vip_addresses(cmd)
             return ''
 
         try:
@@ -324,7 +324,7 @@ class HAFailOver():
 
             self.logger(f"Returning updated next hop: {self.update_next_hop_vsi}")
             if cmd == "SET":
-                self._update_os_routes(cmd)
+                self._update_os_iface_vip_addresses(cmd)
             return self.update_next_hop_vsi
 
         except ApiException as e:
@@ -578,7 +578,7 @@ class HAFailOver():
         """
 
         try:
-            self.logger(env)
+            self.logger("Parsing configuration from environment variables")
             if self.API_KEY in env:
                 self.apikey = env[self.API_KEY]
 
