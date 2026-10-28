@@ -18,19 +18,17 @@
 
 This module provides functions for handling failover operations in IBM Cloud VPC.
 """
-
-import http.client
-import json
-import sys
-import socket
-import subprocess
+from http.client import HTTPConnection, HTTPSConnection
+from json import dumps, loads
+from importlib.metadata import version as v
 from ipaddress import ip_network
-from typing import Tuple, Optional
 from os import environ as env
-from dotenv import load_dotenv
-from ibm_cloud_sdk_core import ApiException
+from socket import create_connection, timeout
+from subprocess import CalledProcessError, run
+from sys import argv, stderr
+from typing import Optional, Tuple, Union
 
-load_dotenv("env")
+from ibm_cloud_sdk_core import ApiException
 
 class HAFailOver():
     """IBM Cloud Fail Over handler class.
@@ -63,12 +61,15 @@ class HAFailOver():
     ext_ip_2 = ""
     vsi_local_az = ""
     local_ip = ""
+    interface_name = ""
+    vip_addresses = []
     DEBUG = False
     #DEBUG = True
 
     def __init__(self) -> None:
         """Initialize the HAFailOver instance."""
         self.logger("--------Constructor---------")
+        self.logger(f"--------Version: {v('ibm_cloud_fail_over')}")
         if self.apikey is None:
             self.logger("--------_parse_config")
             self._parse_config()
@@ -91,7 +92,7 @@ class HAFailOver():
         conn = None
         try:
             vpc_host = self.vpc_url.replace('https://', '')
-            conn = http.client.HTTPSConnection(vpc_host)
+            conn = HTTPSConnection(vpc_host)
 
             # Set up default headers
             default_headers = {
@@ -117,7 +118,7 @@ class HAFailOver():
                 # For DELETE operations, 204 No Content is a success
                 if response.status == 204:
                     return {}
-                return json.loads(response_data) if response_data else {}
+                return loads(response_data) if response_data else {}
 
             # Handle error responses - always raise exception for non-success status
             raise ApiException(f"API request failed: {response.status} {response.reason}\nResponse: {response_data}")
@@ -130,13 +131,19 @@ class HAFailOver():
             if conn is not None:
                 conn.close()
 
-    def update_vpc_fip(self, cmd, vni_id, fip_id):
+    def update_vpc_fip(self, cmd: str, vni_id: str, fip_id: str) -> bool:
         """Update floating IP attachment.
 
         Args:
             cmd (str): 'add' or 'remove'
             vni_id (str): VNI ID
             fip_id (str): Floating IP ID
+
+        Returns:
+            bool: True if the operation was successful
+
+        Raises:
+            ApiException: If there is an error updating the floating IP
         """
         self.logger("Calling update vpc routing table route method VIP.")
         self.logger(f"VPC ID: {self.vpc_id}")
@@ -159,11 +166,42 @@ class HAFailOver():
             self.logger(f"Error updating floating IP: {e}")
             raise
 
-    def update_vpc_routing_table_route(self, cmd, ingress_types=None):
-        """Update VPC routing table route.
+    def _update_os_iface_vip_addresses(self, cmd: str) -> None:
+        """Update local OS network interface VIP addresses.
 
         Args:
-            cmd (str): 'SET' or 'GET'
+            cmd (str): 'SET' or 'UNSET'
+
+        Raises:
+            CalledProcessError: If the ip command fails with a non-recoverable error
+        """
+        self.logger("Calling update OS routes.")
+        self.logger(f"Command: {cmd}")
+
+        valid_vip_addresses = [vip for vip in self.vip_addresses if vip]
+        if not valid_vip_addresses:
+            return
+
+        op = 'add' if cmd == 'SET' else 'del'
+
+        for vip_address in valid_vip_addresses:
+            prefix = vip_address if '/' in vip_address else f'{vip_address}/32'
+            result = run(['ip', 'a', op, prefix, 'dev', self.interface_name], check=False)
+            if result.returncode != 0:
+                if op == 'add' and result.returncode == 2:
+                    self.logger(f"{prefix} already assigned to {self.interface_name}, continuing")
+                else:
+                    self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
+                    raise CalledProcessError(result.returncode, result.args)
+
+    def update_vpc_routing_table_route(self, cmd: str, ingress_types: Optional[list] = None) -> str:
+        """Update VPC routing table route and optionally manage local OS routes.
+
+        Args:
+            cmd (str): 'SET', 'GET', or 'UNSET'
+                - 'SET': Update VPC routes and add VIP addresses to local interface
+                - 'GET': Return current next hop without making changes
+                - 'UNSET': Remove VIP addresses from local interface (no VPC update)
             ingress_types (list, optional): List of ingress types to update. Can include:
                 - 'route_internet_ingress'
                 - 'route_direct_link_ingress'
@@ -171,13 +209,18 @@ class HAFailOver():
                 Defaults to ['route_direct_link_ingress', 'route_transit_gateway_ingress', 'route_internet_ingress']
 
         Returns:
-            str: Updated next hop IP
+            str: Updated next hop IP address, or empty string for UNSET command
+
+        Raises:
+            ApiException: If there is an error updating the routing table route
         """
         self.logger("Calling update vpc routing table route method VIP.")
         self.logger(f"VPC ID: {self.vpc_id}")
         self.logger(f"VPC URL: {self.vpc_url}")
         self.logger(f"VPC self.ext_ip_1: {self.ext_ip_1}")
         self.logger(f"VPC self.ext_ip_2: {self.ext_ip_2}")
+        self.logger(f"VPC self.interface_name: {self.interface_name}")
+        self.logger(f"VPC self.vip_addresses: {self.vip_addresses}")
         self.logger(f"Command: {cmd}")
         self.logger(f"Ingress types to update: {ingress_types}")
 
@@ -185,6 +228,10 @@ class HAFailOver():
         if ingress_types is None:
             ingress_types = ['route_direct_link_ingress', 'route_transit_gateway_ingress', 'route_internet_ingress']
         self.logger(f"Using ingress types: {ingress_types}")
+
+        if cmd == "UNSET":
+            self._update_os_iface_vip_addresses(cmd)
+            return ''
 
         try:
             # Get all routing tables
@@ -198,93 +245,100 @@ class HAFailOver():
                 raise ApiException(f"No routing tables found for VPC {self.vpc_id}")
 
             # Process each routing table
+            # Note: We process ALL routing tables, not just ingress ones
+            # The is_ingress_table flag determines the update strategy:
+            # - Ingress tables: routes must be in correct zone, may need delete/recreate
+            # - Non-ingress tables: routes can be updated in place regardless of zone
             for table in list_tables["routing_tables"]:
-                # Check if this is one of the specified ingress routing tables
-
                 is_ingress_table = any(table.get(ingress_type) for ingress_type in ingress_types)
-                if True: # pylint: disable=using-constant-test
-                    self.logger(f"Found matching ingress routing table: {table['name']} (ID: {table['id']})")
-                    self.logger(f"Table type: internet_ingress={table.get('route_internet_ingress')}, "
-                              f"direct_link_ingress={table.get('route_direct_link_ingress')}, "
-                              f"transit_gateway_ingress={table.get('route_transit_gateway_ingress')}")
-                    table_id = table["id"]
 
-                    # Get routes for this table
-                    self.logger(f"Getting routes for table {table_id}...")
-                    routes = self._make_api_request(
-                        "GET",
-                        f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes?version={self.API_VERSION}&generation=2"
-                    )["routes"]
+                self.logger(f"Processing routing table: {table['name']} (ID: {table['id']}, is_ingress={is_ingress_table})")
+                self.logger(f"Table type: internet_ingress={table.get('route_internet_ingress')}, "
+                          f"direct_link_ingress={table.get('route_direct_link_ingress')}, "
+                          f"transit_gateway_ingress={table.get('route_transit_gateway_ingress')}")
+                table_id = table["id"]
 
-                    # Process each route
-                    for route in routes:
-                        self.logger(f"Checking route: {route['name']} (ID: {route['id']})")
-                        self.logger(f"Route details - destination: {route['destination']}, zone: {route['zone']['name']}, next_hop: {route['next_hop']['address']}")
+                # Get routes for this table
+                self.logger(f"Getting routes for table {table_id}...")
+                routes = self._make_api_request(
+                    "GET",
+                    f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes?version={self.API_VERSION}&generation=2"
+                )["routes"]
 
-                        if route["next_hop"]["address"] in [self.ext_ip_1, self.ext_ip_2]:
-                            if cmd == "GET":
-                                self.logger(f"GET command - returning current next hop: {route['next_hop']['address']}")
-                                return route["next_hop"]["address"]
+                # Process each route
+                for route in routes:
+                    self.logger(f"Checking route: {route['name']} (ID: {route['id']})")
+                    self.logger(f"Route details - destination: {route['destination']}, zone: {route['zone']['name']}, next_hop: {route['next_hop']['address']}")
 
-                            self.find_the_current_and_next_hop_ip(route["next_hop"]["address"])
-                            self.logger(f"Route update - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
+                    if route["next_hop"]["address"] in [self.ext_ip_1, self.ext_ip_2]:
+                        if cmd == "GET":
+                            self.logger(f"GET command - returning current next hop: {route['next_hop']['address']}")
+                            return route["next_hop"]["address"]
 
-                            # Update or create route based on zone
-                            if route["zone"]["name"] == self.vsi_local_az or not is_ingress_table:
-                                self.logger(f"Updating existing route in zone {route['zone']['name']}")
-                                # Update existing route
-                                route_patch = {
-                                    "advertise": route["advertise"],
-                                    "name": route["name"],
-                                    "next_hop": {"address": self.update_next_hop_vsi},
-                                    "priority": route["priority"]
-                                }
+                        self.find_the_current_and_next_hop_ip(route["next_hop"]["address"])
+                        self.logger(f"Route update - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
 
-                                self.logger(f"Patching route {route['id']} with data: {route_patch}")
-                                self._make_api_request(
-                                    "PATCH",
-                                    f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes/{route['id']}?version={self.API_VERSION}&generation=2",
-                                    body=json.dumps(route_patch)
-                                )
-                                self.logger(f"Successfully updated route {route['id']} to use next hop {self.update_next_hop_vsi}")
-                            else:
-                                self.logger(f"Route is in different zone ({route['zone']['name']}), creating new route in zone {self.vsi_local_az}")
-                                # Delete and create new route
-                                self.logger(f"Deleting route {route['id']} from zone {route['zone']['name']}")
-                                self._make_api_request(
-                                    "DELETE",
-                                    f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes/{route['id']}?version={self.API_VERSION}&generation=2"
-                                )
+                        # Update or create route based on zone
+                        if route["zone"]["name"] == self.vsi_local_az or not is_ingress_table:
+                            self.logger(f"Updating existing route in zone {route['zone']['name']}")
+                            # Update existing route
+                            route_patch = {
+                                "advertise": route["advertise"],
+                                "name": route["name"],
+                                "next_hop": {"address": self.update_next_hop_vsi},
+                                "priority": route["priority"]
+                            }
 
-                                new_route = {
-                                    "destination": route["destination"],
-                                    "zone": {"name": self.vsi_local_az} if self.vsi_local_az else route["zone"],
-                                    "action": "deliver",
-                                    "next_hop": {"address": self.update_next_hop_vsi},
-                                    "name": route["name"],
-                                    "advertise": route["advertise"]
-                                }
+                            self.logger(f"Patching route {route['id']} with data: {route_patch}")
+                            self._make_api_request(
+                                "PATCH",
+                                f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes/{route['id']}?version={self.API_VERSION}&generation=2",
+                                body=dumps(route_patch)
+                            )
+                            self.logger(f"Successfully updated route {route['id']} to use next hop {self.update_next_hop_vsi}")
+                        else:
+                            self.logger(f"Route is in different zone ({route['zone']['name']}), creating new route in zone {self.vsi_local_az}")
+                            # Delete and create new route
+                            self.logger(f"Deleting route {route['id']} from zone {route['zone']['name']}")
+                            self._make_api_request(
+                                "DELETE",
+                                f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes/{route['id']}?version={self.API_VERSION}&generation=2"
+                            )
 
-                                self.logger(f"Creating new route with data: {new_route}")
-                                self._make_api_request(
-                                    "POST",
-                                    f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes?version={self.API_VERSION}&generation=2",
-                                    body=json.dumps(new_route)
-                                )
-                                self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
+                            new_route = {
+                                "destination": route["destination"],
+                                "zone": {"name": self.vsi_local_az} if self.vsi_local_az else route["zone"],
+                                "action": "deliver",
+                                "next_hop": {"address": self.update_next_hop_vsi},
+                                "name": route["name"],
+                                "advertise": route["advertise"]
+                            }
+
+                            self.logger(f"Creating new route with data: {new_route}")
+                            self._make_api_request(
+                                "POST",
+                                f"/v1/vpcs/{self.vpc_id}/routing_tables/{table_id}/routes?version={self.API_VERSION}&generation=2",
+                                body=dumps(new_route)
+                            )
+                            self.logger(f"Successfully created new route with next hop {self.update_next_hop_vsi}")
 
             self.logger(f"Returning updated next hop: {self.update_next_hop_vsi}")
+            if cmd == "SET":
+                self._update_os_iface_vip_addresses(cmd)
             return self.update_next_hop_vsi
 
         except ApiException as e:
             self.logger(f"Error updating routing table route: {e}")
             raise
 
-    def get_token(self):
-        """Get Token
+    def get_token(self) -> str:
+        """Get authentication token for IBM Cloud API.
 
         Returns:
-            str: Returning the access token
+            str: Bearer token for API authentication
+
+        Raises:
+            ApiException: If token cannot be retrieved from either API key or trusted profile
         """
         if self.apikey is not None:
             self.logger("------apikey path")
@@ -292,20 +346,23 @@ class HAFailOver():
         self.logger("------trusted profile path")
         return self._get_token_from_tp()
 
-    def _get_token_from_tp(self):
+    def _get_token_from_tp(self) -> str:
         """Get token from trusted profile.
 
         Returns:
             str: Bearer token
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         return self._get_iam_token_from_tp(connection)
 
-    def _get_iam_token_from_tp(self, connection: http.client.HTTPSConnection):
+    def _get_iam_token_from_tp(self, connection: HTTPSConnection) -> str:
         """Get IAM token from trusted profile.
 
         Args:
-            connection (http.client.HTTPSConnection): HTTPS connection to metadata service
+            connection (HTTPSConnection): HTTPS connection to metadata service
 
         Raises:
             ApiException: If access token cannot be retrieved
@@ -317,7 +374,7 @@ class HAFailOver():
         connection.request("POST",
                            self._get_metadata_iam_token_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         if 'access_token' not in response:
             self.logger(response)
             self.logger('Can not get access token from trusted profile.'
@@ -326,11 +383,11 @@ class HAFailOver():
                             'Review if a TP is bound to the instance.')
         return f"Bearer {response['access_token']}"
 
-    def _get_metadata_token(self, connection: http.client.HTTPSConnection):
+    def _get_metadata_token(self, connection: HTTPSConnection) -> str:
         """Get metadata token.
 
         Args:
-            connection (http.client.HTTPSConnection): HTTPS connection to metadata service
+            connection (HTTPSConnection): HTTPS connection to metadata service
 
         Returns:
             str: Metadata access token
@@ -339,9 +396,9 @@ class HAFailOver():
                            self._get_metadata_token_path(),
                            body=self._get_metadata_body(),
                            headers=self._get_metadata_headers())
-        return json.loads(connection.getresponse().read().decode("utf-8"))['access_token']
+        return loads(connection.getresponse().read().decode("utf-8"))['access_token']
 
-    def _get_metadata_token_path(self):
+    def _get_metadata_token_path(self) -> str:
         """Get metadata token path.
 
         Returns:
@@ -349,7 +406,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_PATH}token?version={self.METADATA_VERSION}"
 
-    def _get_metadata_istance_network_int_path(self):
+    def _get_metadata_istance_network_int_path(self) -> str:
         """Get metadata instance network interface path.
 
         Returns:
@@ -357,7 +414,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_INSTACE_NETWORK_INT_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_vni_path(self):
+    def _get_metadata_vni_path(self) -> str:
         """Get metadata VNI path.
 
         Returns:
@@ -365,7 +422,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_VNI_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_istance_path(self):
+    def _get_metadata_istance_path(self) -> str:
         """Get metadata instance path.
 
         Returns:
@@ -373,7 +430,7 @@ class HAFailOver():
         """
         return f"{self.METADATA_INSTACE_PATH}?version={self.METADATA_VERSION}"
 
-    def _get_metadata_iam_token_path(self):
+    def _get_metadata_iam_token_path(self) -> str:
         """Get metadata IAM token path.
 
         Returns:
@@ -381,13 +438,13 @@ class HAFailOver():
         """
         return f"{self.METADATA_PATH}iam_token?version={self.METADATA_VERSION}"
 
-    def _get_metadata_body(self):
+    def _get_metadata_body(self) -> str:
         """Get metadata request body.
 
         Returns:
             str: JSON string with metadata request body
         """
-        return json.dumps({
+        return dumps({
             "expires_in": 3600
         })
 
@@ -402,7 +459,7 @@ class HAFailOver():
             'Accept': 'application/json'
         }
 
-    def _get_metadata_headers_iam(self, metadata_token) -> dict:
+    def _get_metadata_headers_iam(self, metadata_token: str) -> dict:
         """Get metadata IAM request headers.
 
         Args:
@@ -415,20 +472,21 @@ class HAFailOver():
         headers['Authorization'] = f"Bearer {metadata_token}"
         return headers
 
-    def _get_metadata_connection(self):
+    # TODO (3.10): '|' is an alias for 'Union'. pylint: disable=fixme
+    def _get_metadata_connection(self) -> Union[HTTPConnection, HTTPSConnection]:
         """Get metadata service connection.
 
         Raises:
             ApiException: If metadata service is not accessible
 
         Returns:
-            http.client.HTTPConnection / http.client.HTTPSConnection: Connection to metadata service
+            HTTPConnection | HTTPSConnection: Connection to metadata service
         """
         connection = None
         if self._check_connectivity(self.METADATA_HOST, 80):
-            connection = http.client.HTTPConnection(self.METADATA_HOST)
+            connection = HTTPConnection(self.METADATA_HOST)
         elif self._check_connectivity(self.METADATA_HOST, 443):
-            connection = http.client.HTTPSConnection(self.METADATA_HOST)
+            connection = HTTPSConnection(self.METADATA_HOST)
         if connection is None:
             self.logger("Activate metadata at VSI instance please!"
                         "and be sure that a TP is bound to the instance")
@@ -436,14 +494,17 @@ class HAFailOver():
                             "and be sure that a TP is bound to the instance")
         return connection
 
-    def _get_token_from_apikey(self):
+    def _get_token_from_apikey(self) -> str:
         """Get token from API key.
 
         Returns:
             str: Bearer token
+
+        Raises:
+            Exception: If there is an error retrieving the token
         """
         # URL for token
-        conn = http.client.HTTPSConnection("private.iam.cloud.ibm.com")
+        conn = HTTPSConnection("private.iam.cloud.ibm.com")
         # Payload for retrieving token. Note: An API key will need to be generated and replaced here
         payload = (
             "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey="
@@ -467,7 +528,7 @@ class HAFailOver():
             data = res.decode("utf-8")
 
             # Format response in JSON
-            json_res = json.loads(data)
+            json_res = loads(data)
 
             # Concatenate token type and token value
             return json_res["token_type"] + " " + json_res["access_token"]
@@ -477,7 +538,7 @@ class HAFailOver():
             self.logger(f"Error getting token. {error}")
             raise
 
-    def _check_connectivity(self, ip, port):
+    def _check_connectivity(self, ip: str, port: int) -> bool:
         """Check connectivity to a host and port.
 
         Args:
@@ -488,16 +549,17 @@ class HAFailOver():
             bool: True if connection successful, False otherwise
         """
         try:
-            with socket.create_connection((ip, port), 5):
+            with create_connection((ip, port), 5):
                 self.logger(f"Successfully connected to {ip}:{port}")
                 return True
-        except socket.timeout:
+        # TODO (3.10): 'timeout' is an alias of TimeoutError. pylint: disable=fixme
+        except timeout:
             self.logger(f"Connection to {ip}:{port} timed out.")
-        except socket.error as e:
+        except OSError as e:
             self.logger(f"Failed to connect to {ip}:{port}: {e}")
         return False
 
-    def _parameter_exception(self, missing_parameter):
+    def _parameter_exception(self, missing_parameter: str) -> None:
         """Raise an exception for missing parameter.
 
         Args:
@@ -508,11 +570,15 @@ class HAFailOver():
         """
         raise ApiException("Please!!! provide " + missing_parameter)
 
-    def _parse_config(self):
-        """Parse configuration from environment variables."""
+    def _parse_config(self) -> None:
+        """Parse configuration from environment variables.
+
+        Logs errors if VPC_URL is missing but does not raise exceptions.
+        Sets instance variables from environment: apikey, vpc_id, vpc_url, vsi_local_az, ext_ip_1, ext_ip_2.
+        """
 
         try:
-            self.logger(env)
+            self.logger("Parsing configuration from environment variables")
             if self.API_KEY in env:
                 self.apikey = env[self.API_KEY]
 
@@ -544,17 +610,20 @@ class HAFailOver():
         except ApiException as e:
             self.logger(e)
 
-    def logger(self, message):
+    def logger(self, message: str) -> None:
         """Log a message if DEBUG is enabled.
 
         Args:
             message (str): Message to log
         """
         if self.DEBUG:
-            print(message)
+            print(message, file=stderr)
 
-    def find_the_current_and_next_hop_ip(self, route_address):
+    def find_the_current_and_next_hop_ip(self, route_address: str) -> None:
         """Find current and next hop IP addresses.
+
+        Sets the instance variables next_hop_vsi and update_next_hop_vsi based on
+        the current route address and configured external IPs.
 
         Args:
             route_address (str): Current route address
@@ -576,50 +645,59 @@ class HAFailOver():
         self.logger("Current next hop IP is: " + self.next_hop_vsi)
         self.logger("Update next hop IP to: " + self.update_next_hop_vsi)
 
-    def get_instance_metadata(self):
+    def get_instance_metadata(self) -> dict:
         """Get instance metadata from metadata service.
 
         Returns:
-            dict: Instance metadata
+            dict: Instance metadata including VPC ID, zone, and other instance information
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
-    def get_instance_interface_metadata(self):
+    def get_instance_interface_metadata(self) -> dict:
         """Get instance network interface metadata from metadata service.
 
         Returns:
-            dict: Instance network interface metadata
+            dict: Instance network interface metadata including floating IPs and network configuration
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_network_int_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
-    def get_vni_metadata(self):
+    def get_vni_metadata(self) -> dict:
         """Get virtual network interface metadata from metadata service.
 
         Returns:
-            dict: Virtual network interface metadata
+            dict: Virtual network interface metadata including VNI IDs and configuration
+
+        Raises:
+            ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_vni_path(),
                            headers=self._get_metadata_headers_iam(metadata_token))
-        response = json.loads(connection.getresponse().read().decode("utf-8"))
+        response = loads(connection.getresponse().read().decode("utf-8"))
         return response
 
     def get_next_hop_for_cidr(self, cidr: str, api_version: str = "2026-06-01",
-                             maturity: Optional[str] = None, generation: str = "2") -> str:
+                             maturity: Optional[str] = None, generation: str = "2") -> Optional[str]:
         """Get the next hop IP address for a given CIDR in the internet ingress routing table.
 
         Args:
@@ -629,7 +707,7 @@ class HAFailOver():
             generation (str, optional): API generation. Defaults to "2".
 
         Returns:
-            str: The next hop IP address for the route matching the CIDR, or None if not found
+            Optional[str]: The next hop IP address for the route matching the CIDR, or None if not found
 
         Raises:
             ApiException: If there is an error getting the next hop
@@ -726,7 +804,7 @@ class HAFailOver():
         return None
 
     def get_next_hop_for_par(self, range_id: str, api_version: str = "2026-06-01",
-                            maturity: Optional[str] = None, generation: str = "2") -> str:
+                            maturity: Optional[str] = None, generation: str = "2") -> Optional[str]:
         """Get the next hop IP address for a public address range.
 
         Args:
@@ -736,7 +814,7 @@ class HAFailOver():
             generation (str, optional): API generation. Defaults to "2".
 
         Returns:
-            str: The next hop IP address for the route, or None if not found
+            Optional[str]: The next hop IP address for the route, or None if not found
 
         Raises:
             ApiException: If there is an error getting the next hop
@@ -787,7 +865,7 @@ class HAFailOver():
             self.logger(f"Error getting next hop for public address range: {e}")
             raise ApiException(f"Error getting next hop for public address range: {e}") from e
 
-    def get_public_address_range(self, range_id, api_version="2026-06-01", maturity: Optional[str] = None, generation="2"):
+    def get_public_address_range(self, range_id: str, api_version: str = "2026-06-01", maturity: Optional[str] = None, generation: str = "2") -> dict:
         """Get information about a public address range.
 
         Args:
@@ -807,7 +885,7 @@ class HAFailOver():
         self.logger(f"VPC_URL: {self.vpc_url}")
 
         try:
-            conn = http.client.HTTPSConnection(self.vpc_url.replace('https://', ''))
+            conn = HTTPSConnection(self.vpc_url.replace('https://', ''))
             headers = {
                 'Authorization': self.get_token(),
                 'Content-Type': 'application/json',
@@ -825,13 +903,13 @@ class HAFailOver():
             if response.status != 200:
                 raise ApiException(f"Failed to get public address range: {response.status} {response.reason}")
 
-            range_info = json.loads(response.read().decode("utf-8"))
+            range_info = loads(response.read().decode("utf-8"))
             self.logger(f"Range information: {range_info}")
             return range_info
         except Exception as e:
             raise ApiException(f"Unexpected error: {e}") from e
 
-    def _update_range_zone(self, range_id, api_version, maturity, generation):
+    def _update_range_zone(self, range_id: str, api_version: str, maturity: Optional[str], generation: str) -> dict:
         """Update the zone of a public address range.
 
         Args:
@@ -847,7 +925,7 @@ class HAFailOver():
             ApiException: If there is an error updating the range
         """
         self.logger("Updating public address range target zone")
-        conn = http.client.HTTPSConnection(self.vpc_url.replace('https://', ''))
+        conn = HTTPSConnection(self.vpc_url.replace('https://', ''))
         try:
             headers = {
                 'Authorization': self.get_token(),
@@ -872,13 +950,13 @@ class HAFailOver():
             self.logger(f"Update range_patch_model: {range_patch_model}")
             conn.request("PATCH",
                         f"/v1/public_address_ranges/{range_id}?version={api_version}&generation={generation}{maturity_param}",
-                        body=json.dumps(range_patch_model),
+                        body=dumps(range_patch_model),
                         headers=headers)
 
             response = conn.getresponse()
             if response.status != 200:
                 raise ApiException(f"Failed to update public address range: {response.status} {response.reason}")
-            updated_range = json.loads(response.read().decode("utf-8"))
+            updated_range = loads(response.read().decode("utf-8"))
             self.logger(f"Update response: {updated_range}")
             self.logger("Successfully updated public address range")
             return updated_range
@@ -920,8 +998,8 @@ class HAFailOver():
             self.logger(f"Error checking zone compatibility: {e}")
             raise ApiException(f"Error checking zone compatibility: {e}") from e
 
-    def update_public_address_range(self, range_id, api_version="2026-06-01",
-                                  maturity: Optional[str] = None, generation="2"):
+    def update_public_address_range(self, range_id: str, api_version: str = "2026-06-01",
+                                  maturity: Optional[str] = None, generation: str = "2") -> Optional[dict]:
         """Update the target zone of a public address range to match the VSI's local availability zone.
 
         Args:
@@ -974,7 +1052,7 @@ class HAFailOver():
 
             # Set up HTTP connection
             vpc_host = self.vpc_url.replace('https://', '')
-            conn = http.client.HTTPSConnection(vpc_host)
+            conn = HTTPSConnection(vpc_host)
 
             # Set up headers
             headers = {
@@ -993,7 +1071,7 @@ class HAFailOver():
             if response.status != 200:
                 raise ApiException(f"Failed to get routing tables: {response.status} {response.reason}")
 
-            list_tables = json.loads(response.read().decode("utf-8"))
+            list_tables = loads(response.read().decode("utf-8"))
 
             if not list_tables or "routing_tables" not in list_tables:
                 raise ApiException(f"No routing tables found for VPC {self.vpc_id}")
@@ -1014,7 +1092,7 @@ class HAFailOver():
                     if response.status != 200:
                         raise ApiException(f"Failed to get routes: {response.status} {response.reason}")
 
-                    routes = json.loads(response.read().decode("utf-8"))["routes"]
+                    routes = loads(response.read().decode("utf-8"))["routes"]
 
                     # Check each route for the next hop IP
                     for route in routes:
@@ -1037,7 +1115,7 @@ class HAFailOver():
 
 def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
                         api_version: str = "2026-06-01", maturity: Optional[str] = None,
-                        generation: str = "2") -> str:
+                        generation: str = "2") -> Optional[str]:
     """Get the next hop IP address for a public address range.
 
     Args:
@@ -1049,7 +1127,7 @@ def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
         generation (str, optional): API generation. Defaults to "2".
 
     Returns:
-        str: The next hop IP address for the route, or None if not found
+        Optional[str]: The next hop IP address for the route, or None if not found
 
     Raises:
         ApiException: If there is an error getting the next hop
@@ -1065,8 +1143,8 @@ def get_next_hop_for_par(range_id: str, vpc_url: str = "", api_key: str = "",
 
     return ha_fail_over.get_next_hop_for_par(range_id, api_version, maturity, generation)
 
-def fail_over_public_address_range(range_id, vpc_url="", api_key="", api_version="2026-06-01",
-                                 maturity: Optional[str] = None, generation="2", nexthop_ip_1="", nexthop_ip_2=""):
+def fail_over_public_address_range(range_id: str, vpc_url: str = "", api_key: str = "", api_version: str = "2026-06-01",
+                                 maturity: Optional[str] = None, generation: str = "2", nexthop_ip_1: str = "", nexthop_ip_2: str = "") -> Optional[dict]:
     """Update the target zone of a public address range to match the VSI's local availability zone.
 
     Args:
@@ -1080,7 +1158,10 @@ def fail_over_public_address_range(range_id, vpc_url="", api_key="", api_version
         nexthop_ip_2 (str, optional): IP address of the second VSI. Defaults to "".
 
     Returns:
-        dict: The updated public address range information if updated, None if no update needed
+        Optional[dict]: The updated public address range information if updated, None if no update needed
+
+    Raises:
+        ApiException: If VPC ID cannot be retrieved, required parameters are missing, or there is an error updating the range
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1119,17 +1200,20 @@ def fail_over_check_par_zone_compatibility(
     """Check if the public address range and VSI are in the same zone.
 
     Args:
-        range_id: The ID of the public address range to check
-        vpc_url: IBM Cloud VPC regional URL
-        api_key: IBM Cloud API key
-        api_version: API version to use
-        maturity: API maturity level
-        generation: API generation
+        range_id (str): The ID of the public address range to check
+        vpc_url (str, optional): IBM Cloud VPC regional URL. Defaults to "".
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
+        api_version (str, optional): API version to use. Defaults to "2026-06-01".
+        maturity (str, optional): API maturity level. Defaults to "ga".
+        generation (str, optional): API generation. Defaults to "2".
 
     Returns:
-        A tuple containing:
+        Tuple[bool, str]: A tuple containing:
             - bool: True if zones match, False otherwise
             - str: Current zone name
+
+    Raises:
+        ApiException: If there is an error checking zone compatibility
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1146,18 +1230,20 @@ def fail_over_check_par_zone_compatibility(
         generation=generation
     )
 
-def fail_over(cmd):
+def fail_over(cmd: str) -> str:
     """Execute failover operation.
 
     Args:
-        cmd (str): GET or SET
+        cmd (str): Command to execute - 'GET' to retrieve current next hop, 'SET' to update routing
 
     Returns:
-        str: Status message
+        str: Status message indicating the updated custom route
+
+    Raises:
+        ApiException: If there is an error during the failover operation
     """
     ha_fail_over = HAFailOver()
-    # self.logger("Request received from: " + remote_addr)
-    ip_a = subprocess.run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
+    ip_a = run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
     if ha_fail_over.ext_ip_1 in ip_a:
         ha_fail_over.local_ip = ha_fail_over.ext_ip_1
     elif ha_fail_over.ext_ip_2 in ip_a:
@@ -1165,29 +1251,35 @@ def fail_over(cmd):
     made_update = ha_fail_over.update_vpc_routing_table_route(cmd)
     return "Updated Custom Route: " + str(made_update)
 
-def fail_over_fip(cmd, vni_id, fip_id):
+def fail_over_fip(cmd: str, vni_id: str, fip_id: str) -> None:
     """Execute floating IP failover.
 
     Args:
-        cmd (str): add or remove
-        vni_id (str): VNI UUID
+        cmd (str): Command to execute - 'add' to attach or 'remove' to detach floating IP
+        vni_id (str): Virtual Network Interface UUID
         fip_id (str): Floating IP UUID
+
+    Raises:
+        ApiException: If there is an error updating the floating IP attachment
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.update_vpc_fip(cmd, vni_id, fip_id)
 
-def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
-    """Stop floating IP failover.
+def fail_over_floating_ip_stop(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_id: str, api_key: str = "") -> Tuple[Optional[str], Optional[str]]:
+    """Stop floating IP failover by removing the floating IP from the local VNI.
 
     Args:
         vpc_url (str): IBM Cloud VPC regional URL
-        vni_id_1 (str): First VNI ID
-        vni_id_2 (str): Second VNI ID
-        fip_id (str): Floating IP ID
-        api_key (str, optional): IBM Cloud API key
+        vni_id_1 (str): First Virtual Network Interface ID
+        vni_id_2 (str): Second Virtual Network Interface ID
+        fip_id (str): Floating IP ID to detach
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
 
     Returns:
-        tuple: Floating IP ID and IP address
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error removing the floating IP or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1201,18 +1293,21 @@ def fail_over_floating_ip_stop(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
     fip_id, fip_ip = fail_over_get_attached_fip(api_key)
     return fip_id, fip_ip
 
-def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key=""):
-    """Start floating IP failover.
+def fail_over_floating_ip_start(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_id: str, api_key: str = "") -> Tuple[Optional[str], Optional[str]]:
+    """Start floating IP failover by attaching the floating IP to the local VNI.
 
     Args:
         vpc_url (str): IBM Cloud VPC regional URL
-        vni_id_1 (str): First VNI ID
-        vni_id_2 (str): Second VNI ID
-        fip_id (str): Floating IP ID
-        api_key (str, optional): IBM Cloud API key
+        vni_id_1 (str): First Virtual Network Interface ID
+        vni_id_2 (str): Second Virtual Network Interface ID
+        fip_id (str): Floating IP ID to attach
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
 
     Returns:
-        tuple: Floating IP ID and IP address
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error attaching the floating IP or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
@@ -1233,14 +1328,17 @@ def fail_over_floating_ip_start(vpc_url, vni_id_1, vni_id_2, fip_id, api_key="")
     fip_id, fip_ip = fail_over_get_attached_fip(api_key)
     return fip_id, fip_ip
 
-def fail_over_get_attached_fip(api_key):
-    """Get attached floating IP information.
+def fail_over_get_attached_fip(api_key: str) -> Tuple[Optional[str], Optional[str]]:
+    """Get attached floating IP information from instance metadata.
 
     Args:
         api_key (str): IBM Cloud API key
 
     Returns:
-        tuple: Floating IP ID and IP address, or (None, None) if not found
+        Tuple[Optional[str], Optional[str]]: Tuple containing floating IP ID and IP address, or (None, None) if not found
+
+    Raises:
+        ApiException: If there is an error accessing instance metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.apikey = api_key
@@ -1252,24 +1350,31 @@ def fail_over_get_attached_fip(api_key):
             return attached_fip_id, attached_fip_ip
     return None , None
 
-def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key=""):
+def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_key: str = "", interface_name: str = "", vip_addresses: str = "") -> str:
     """Execute custom route VIP failover.
 
     Args:
-        cmd (str): SET or GET
-        vpc_url (str): IBM cloud regional VPC URL
-        ext_ip_1 (str): IP of the first VSI
-        ext_ip_2 (str): IP of the second VSI
-        api_key (str): IBM Cloud API key
+        cmd (str): Command to execute - 'SET' to update routes and assign VIPs, 'GET' to retrieve current next hop, or 'UNSET' to remove VIPs
+        vpc_url (str): IBM Cloud regional VPC URL
+        ext_ip_1 (str): IP address of the first VSI
+        ext_ip_2 (str): IP address of the second VSI
+        api_key (str, optional): IBM Cloud API key. Defaults to "".
+        interface_name (str, optional): Local network interface to assign vip_addresses to. Defaults to "".
+        vip_addresses (str, optional): Comma-separated VIP addresses to assign locally. Defaults to "".
 
     Returns:
         str: Next hop IP address
+
+    Raises:
+        ApiException: If there is an error during the failover operation or accessing metadata
     """
     ha_fail_over = HAFailOver()
     ha_fail_over.vpc_url = vpc_url
     ha_fail_over.ext_ip_2 = ext_ip_2
     ha_fail_over.ext_ip_1 = ext_ip_1
     ha_fail_over.apikey = api_key
+    ha_fail_over.interface_name = interface_name
+    ha_fail_over.vip_addresses = vip_addresses.split(',')
     instance_metadata = ha_fail_over.get_instance_metadata()
     if "vpc" in instance_metadata:
         ha_fail_over.vpc_id = instance_metadata["vpc"]["id"]
@@ -1279,10 +1384,9 @@ def fail_over_cr_vip (cmd , vpc_url, ext_ip_1 , ext_ip_2, api_key=""):
     next_hop = ha_fail_over.update_vpc_routing_table_route(cmd)
     return next_hop
 
-def usage_fip():
-    """Print usage information for floating IP commands."""
-    print("{0} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]"f'{sys.argv[0]}')
-    print("\n")
+def usage_fip() -> None:
+    """Print usage information for floating IP commands to stdout."""
+    print(f"{argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
 
 def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "", api_key: str = "") -> bool:
     """Check if a specific next hop IP is used in the internet ingress routing table.
@@ -1310,11 +1414,11 @@ def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "
     return ha_fail_over.check_next_hop_in_internet_ingress(next_hop_ip)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 2:
-        if sys.argv[1] == "FIP":
-            fail_over_fip(sys.argv[2], sys.argv[3], sys.argv[4])
-        elif sys.argv[1] == "ROUTE":
-            fail_over(sys.argv[2])
+    if len(argv) > 2:
+        if argv[1] == "FIP":
+            fail_over_fip(argv[2], argv[3], argv[4])
+        elif argv[1] == "ROUTE":
+            fail_over(argv[2])
     else:
         print(
             "Error must provide parameter usage: ibm_cloud_pacemaker_fail_over.py ROUTE GET|SET"
