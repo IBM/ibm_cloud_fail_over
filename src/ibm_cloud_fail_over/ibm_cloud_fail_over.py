@@ -29,10 +29,7 @@ from os import environ as env
 from subprocess import CalledProcessError, run
 from typing import Tuple, Optional, Union
 
-from dotenv import load_dotenv
 from ibm_cloud_sdk_core import ApiException
-
-load_dotenv("env")
 
 class HAFailOver():
     """IBM Cloud Fail Over handler class.

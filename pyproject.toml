@@ -16,7 +16,7 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["ibm-cloud-sdk-core", "ibm-vpc", "python-dotenv"]
+dependencies = ["ibm-cloud-sdk-core"]
 [project.urls]
 Homepage = "https://github.com/IBM/ibm_cloud_fail_over"
 Issues = "https://github.com/IBM/ibm_cloud_fail_over/issues"
