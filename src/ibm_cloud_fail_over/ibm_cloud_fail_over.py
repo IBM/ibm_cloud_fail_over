@@ -1243,7 +1243,12 @@ def fail_over(cmd: str) -> str:
         ApiException: If there is an error during the failover operation
     """
     ha_fail_over = HAFailOver()
-    ip_a = run(['ip', 'a'], capture_output=True, text=True, check=False).stdout
+    try:
+        ip_a = run(['ip', 'a'], capture_output=True, text=True, check=True).stdout
+    except CalledProcessError as e:
+        msg = f'WARN: Unable to list assigned addresses {e}'
+        ha_fail_over.logger(msg)
+        raise ApiException(msg) from e
     if ha_fail_over.ext_ip_1 in ip_a:
         ha_fail_over.local_ip = ha_fail_over.ext_ip_1
     elif ha_fail_over.ext_ip_2 in ip_a:
