@@ -59,24 +59,28 @@ active_ip = fail_over_cr_vip(
     vpc_url='IBM Cloud VPC regional URL',
     ext_ip_1='IP of the first VSI',
     ext_ip_2='IP of the second VSI',
-    api_key='Optional: API key'
+    api_key='Optional: API key',
+    interface_name='eth0',                  # Optional: network interface
+    vip_addresses='10.240.0.10,10.240.0.11' # Optional: VIP addresses
 )
 print(active_ip)
 ```
 
 **Parameters:**
 
-| Parameter  | Type | Description                                                                          |
-|------------|------|--------------------------------------------------------------------------------------|
-| `cmd`      | str  | Command to execute: 'SET' to perform failover or 'GET' to retrieve current next hop. |
-| `vpc_url`  | str  | IBM Cloud VPC regional URL.                                                          |
-| `ext_ip_1` | str  | IP address of the first VSI.                                                         |
-| `ext_ip_2` | str  | IP address of the second VSI.                                                        |
-| `api_key`  | str  | Optional: IBM Cloud API access key (needed only if not using trusted profile).       |
+| Parameter        | Type | Description                                                                                                                |
+|------------------|------|----------------------------------------------------------------------------------------------------------------------------|
+| `cmd`            | str  | Command to execute: 'SET' to update routes and assign VIPs, 'GET' to retrieve current next hop, or 'UNSET' to remove VIPs. |
+| `vpc_url`        | str  | IBM Cloud regional VPC URL.                                                                                                |
+| `ext_ip_1`       | str  | IP address of the first VSI.                                                                                               |
+| `ext_ip_2`       | str  | IP address of the second VSI.                                                                                              |
+| `api_key`        | str  | Optional: IBM Cloud API key (defaults to "").                                                                              |
+| `interface_name` | str  | Optional: Local network interface to assign vip_addresses to (defaults to "").                                             |
+| `vip_addresses`  | str  | Optional: Comma-separated VIP addresses to assign locally (defaults to "").                                                |
 
 **Returns:**
 
-- The next hop IP address.
+- `str`: Next hop IP address.
 
 #### `fail_over_floating_ip_start`
 
@@ -111,8 +115,8 @@ print(fip_id, fip_ip)
 **Returns:**
 
 - A tuple containing:
-  - Floating IP ID
-  - Floating IP address
+  - `str`: Floating IP ID, or None if not found
+  - `str`: Floating IP address, or None if not found
 
 #### `fail_over_floating_ip_stop`
 
@@ -147,8 +151,8 @@ print(fip_id, fip_ip)
 **Returns:**
 
 - A tuple containing:
-  - Floating IP ID
-  - Floating IP address
+  - `str`: Floating IP ID, or None if not found
+  - `str`: Floating IP address, or None if not found
 
 #### `fail_over_get_attached_fip`
 
@@ -174,8 +178,9 @@ print(attached_fip_id)
 
 **Returns:**
 
-- `attached_fip_id`: The UUID of the attached Floating IP
-- `attached_fip_ip`: The IP address of the attached Floating IP
+- A tuple containing:
+  - `attached_fip_id`: The UUID of the attached Floating IP, or None if not found
+  - `attached_fip_ip`: The IP address of the attached Floating IP, or None if not found
 
 #### `fail_over_public_address_range`
 
@@ -215,8 +220,7 @@ print(result)
 
 **Returns:**
 
-- The updated public address range information if an update was needed
-- None if no update was needed (range already in correct zone)
+- `Optional[dict]`: The updated public address range information if an update was needed, or None if no update was needed (range already in correct zone)
 
 **Note:**
 
@@ -271,6 +275,88 @@ else:
 - The function automatically detects the VSI's local availability zone
 - Requires the same instance metadata service and trusted profile setup as other functions
 - Useful for checking zone compatibility before performing failover operations
+
+#### `get_next_hop_for_par`
+
+This function retrieves the next hop IP address for a public address range by looking up its CIDR in the internet ingress routing table.
+
+**Usage:**
+
+```python
+from ibm_cloud_fail_over import get_next_hop_for_par
+
+# Example usage
+next_hop = get_next_hop_for_par(
+    range_id='public_address_range_uuid',
+    vpc_url='IBM Cloud VPC regional URL',
+    api_key='Optional: API key',
+    api_version='2026-06-01', # Optional: API version
+    maturity=None,            # Optional: API maturity level (None for GA APIs)
+    generation='2'            # Optional: API generation
+)
+print(next_hop)
+```
+
+**Parameters:**
+
+| Parameter     | Type      | Description                                                           |
+|---------------|-----------|-----------------------------------------------------------------------|
+| `range_id`    | str (uuid)| The ID of the public address range.                                   |
+| `vpc_url`     | str (url) | IBM Cloud VPC regional URL (defaults to "").                          |
+| `api_key`     | str       | Optional: IBM Cloud API access key (defaults to "").                  |
+| `api_version` | str       | Optional: API version (defaults to "2026-06-01").                     |
+| `maturity`    | str       | Optional: API maturity level (defaults to None, omitted for GA APIs). |
+| `generation`  | str       | Optional: API generation (defaults to "2").                           |
+
+**Returns:**
+
+- `Optional[str]`: The next hop IP address for the route, or None if not found
+
+**Note:**
+
+- The function automatically retrieves the public address range's CIDR and searches for it in the internet ingress routing table
+- Uses prefix matching if no exact CIDR match is found, falling back to the default route (0.0.0.0/0) if needed
+- Requires the same instance metadata service and trusted profile setup as other functions
+
+#### `fail_over_check_next_hop_internet_ingress`
+
+This function checks if a specific next hop IP address is used in the internet ingress routing table.
+
+**Usage:**
+
+```python
+from ibm_cloud_fail_over import fail_over_check_next_hop_internet_ingress
+
+# Example usage
+is_used = fail_over_check_next_hop_internet_ingress(
+    next_hop_ip='10.240.0.5',
+    vpc_url='IBM Cloud VPC regional URL',
+    api_key='Optional: API key'
+)
+
+if is_used:
+    print(f'Next hop {next_hop_ip} is used in internet ingress routing table')
+else:
+    print(f'Next hop {next_hop_ip} is not found in internet ingress routing table')
+```
+
+**Parameters:**
+
+| Parameter     | Type | Description                                          |
+|---------------|------|------------------------------------------------------|
+| `next_hop_ip` | str  | The next hop IP address to check for.                |
+| `vpc_url`     | str  | IBM Cloud VPC regional URL (defaults to "").         |
+| `api_key`     | str  | Optional: IBM Cloud API access key (defaults to ""). |
+
+**Returns:**
+
+- `bool`: True if the next hop IP is found in the internet ingress routing table, False otherwise
+
+**Note:**
+
+- Useful for verifying routing configuration before performing failover operations
+- Only checks the internet ingress routing table
+- Requires the same instance metadata service and trusted profile setup as other functions
 
 ## Troubleshooting
 
