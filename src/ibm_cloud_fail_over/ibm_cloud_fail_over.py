@@ -276,7 +276,12 @@ class HAFailOver():
                             return route["next_hop"]["address"]
 
                         self.find_the_current_and_next_hop_ip(route["next_hop"]["address"])
-                        self.logger(f"Route update - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
+
+                        if self.next_hop_vsi == route["next_hop"]["address"]:
+                            self.logger(f"Route update unnecessary - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
+                            return route["next_hop"]["address"]
+
+                        self.logger(f"Route update necessary - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
 
                         # Update or create route based on zone
                         if route["zone"]["name"] == self.vsi_local_az or not is_ingress_table:
