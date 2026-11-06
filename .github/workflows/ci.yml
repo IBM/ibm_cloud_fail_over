@@ -1,4 +1,4 @@
-name: Lint
+name: CI
 
 on:
   push:
@@ -32,3 +32,26 @@ jobs:
     - name: Analysing the code with pylint
       run: |
         pylint src/ibm_cloud_fail_over/
+
+  test:
+    runs-on: ubuntu-slim
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.15']
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+
+    - name: Run unit tests
+      run: |
+        python -m unittest discover -s tests -p "test_*.py" -v
