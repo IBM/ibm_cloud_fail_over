@@ -10,13 +10,13 @@ authors = [
 ]
 description = "Package providing IBM Cloud failover functions for HA clusters."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["ibm-cloud-sdk-core", "ibm-vpc", "python-dotenv"]
+dependencies = ["ibm-cloud-sdk-core"]
 [project.urls]
 Homepage = "https://github.com/IBM/ibm_cloud_fail_over"
 Issues = "https://github.com/IBM/ibm_cloud_fail_over/issues"
@@ -28,6 +28,7 @@ disable = [
     "C0302", # too-many-lines
     "R0902", # too-many-instance-attributes
     "R0913", # too-many-arguments
+    "R0915", # too-many-statements
     "R0917", # too-many-positional-arguments
     "R1702", # too-many-nested blocks
 ]
