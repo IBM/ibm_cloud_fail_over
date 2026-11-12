@@ -17,6 +17,12 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = ["ibm-cloud-sdk-core"]
+
+[project.optional-dependencies]
+dev = [
+    "pylint==3.3.9",
+]
+
 [project.urls]
 Homepage = "https://github.com/IBM/ibm_cloud_fail_over"
 Issues = "https://github.com/IBM/ibm_cloud_fail_over/issues"
