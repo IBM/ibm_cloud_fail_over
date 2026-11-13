@@ -1,7 +1,6 @@
 """IBM Cloud Fail Over package."""
 
 from .ibm_cloud_fail_over import (
-    HAFailOver,
     fail_over_check_next_hop_internet_ingress,
     fail_over_check_par_zone_compatibility,
     fail_over_cr_vip,
@@ -13,7 +12,6 @@ from .ibm_cloud_fail_over import (
 )
 
 __all__ = [
-    'HAFailOver',
     'fail_over_check_next_hop_internet_ingress',
     'fail_over_check_par_zone_compatibility',
     'fail_over_cr_vip',
