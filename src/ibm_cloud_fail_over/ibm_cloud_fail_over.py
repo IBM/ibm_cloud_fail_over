@@ -1394,10 +1394,6 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
     next_hop = ha_fail_over.update_vpc_routing_table_route(cmd)
     return next_hop
 
-def usage_fip() -> None:
-    """Print usage information for floating IP commands to stdout."""
-    print(f"{argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
-
 def fail_over_check_next_hop_internet_ingress(next_hop_ip: str, vpc_url: str = "", api_key: str = "") -> bool:
     """Check if a specific next hop IP is used in the internet ingress routing table.
 
@@ -1433,4 +1429,4 @@ if __name__ == "__main__":
         print(
             "Error must provide parameter usage: ibm_cloud_pacemaker_fail_over.py ROUTE GET|SET"
         )
-        usage_fip()
+        print(f"{argv[0]} [FIP] [CMD add|remove] [VNI_ID] [FIP_ID]\n")
