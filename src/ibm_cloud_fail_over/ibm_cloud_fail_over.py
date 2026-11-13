@@ -28,7 +28,33 @@ from subprocess import CalledProcessError, run
 from sys import argv, stderr
 from typing import Optional, Tuple, Union
 
-from ibm_cloud_sdk_core import ApiException
+class ApiException(Exception):
+    """Exception raised for API-related errors.
+
+    This exception is raised when there are errors communicating with
+    IBM Cloud APIs or when API operations fail.
+
+    Attributes:
+        message (str): Human-readable error message
+        code (int, optional): HTTP status code if applicable
+    """
+
+    def __init__(self, message: str, code: int = None):
+        """Initialize ApiException.
+
+        Args:
+            message (str): Error message describing what went wrong
+            code (int, optional): HTTP status code if applicable
+        """
+        self.message = message
+        self.code = code
+        super().__init__(self.message)
+
+    def __str__(self):
+        """Return string representation of the exception."""
+        if self.code:
+            return f"[{self.code}] {self.message}"
+        return self.message
 
 class HAFailOver():
     """IBM Cloud Fail Over handler class.
