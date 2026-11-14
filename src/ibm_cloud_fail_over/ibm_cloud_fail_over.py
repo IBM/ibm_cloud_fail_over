@@ -51,7 +51,11 @@ class ApiException(Exception):
         super().__init__(self.message)
 
     def __str__(self) -> str:
-        """Return string representation of the exception."""
+        """Return string representation of the exception.
+        
+        Returns:
+            str: Formatted error message with optional status code
+        """
         if self.code:
             return f"[{self.code}] {self.message}"
         return self.message
