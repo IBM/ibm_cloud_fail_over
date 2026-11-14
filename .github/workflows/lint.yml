@@ -31,3 +31,7 @@ jobs:
     - name: Analysing the code with pylint
       run: |
         pylint src/ibm_cloud_fail_over/
+
+    - name: Type checking with mypy
+      run: |
+        mypy src/ibm_cloud_fail_over/

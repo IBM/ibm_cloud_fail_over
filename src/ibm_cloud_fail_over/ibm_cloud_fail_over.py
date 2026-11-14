@@ -39,7 +39,7 @@ class ApiException(Exception):
         code (int, optional): HTTP status code if applicable
     """
 
-    def __init__(self, message: str, code: int = None):
+    def __init__(self, message: str, code: Optional[int] = None) -> None:
         """Initialize ApiException.
 
         Args:
@@ -50,7 +50,7 @@ class ApiException(Exception):
         self.code = code
         super().__init__(self.message)
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return string representation of the exception."""
         if self.code:
             return f"[{self.code}] {self.message}"
@@ -88,7 +88,7 @@ class HAFailOver():
     vsi_local_az = ""
     local_ip = ""
     interface_name = ""
-    vip_addresses = []
+    vip_addresses: list[str] = []
     DEBUG = False
     #DEBUG = True
 
@@ -100,7 +100,7 @@ class HAFailOver():
             self.logger("--------_parse_config")
             self._parse_config()
 
-    def _make_api_request(self, method: str, path: str, headers: dict = None, body: str = None) -> dict:
+    def _make_api_request(self, method: str, path: str, headers: Optional[dict] = None, body: Optional[str] = None) -> dict:
         """Make an API request to the VPC API.
 
         Args:
@@ -387,6 +387,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
+        if not isinstance(connection, HTTPSConnection):
+            raise ApiException("Metadata service requires HTTPS connection")
         return self._get_iam_token_from_tp(connection)
 
     def _get_iam_token_from_tp(self, connection: HTTPSConnection) -> str:
@@ -539,7 +541,7 @@ class HAFailOver():
         # Payload for retrieving token. Note: An API key will need to be generated and replaced here
         payload = (
             "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey="
-            + self.apikey
+            + (self.apikey or "")
             + "&response_type=cloud_iam"
         )
 
@@ -639,7 +641,7 @@ class HAFailOver():
                 self.logger("External IP 1: " + self.ext_ip_2)
 
         except ApiException as e:
-            self.logger(e)
+            self.logger(str(e))
 
     def logger(self, message: str) -> None:
         """Log a message if DEBUG is enabled.
@@ -686,6 +688,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
+        if not isinstance(connection, HTTPSConnection):
+            raise ApiException("Metadata service requires HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_path(),
@@ -703,6 +707,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
+        if not isinstance(connection, HTTPSConnection):
+            raise ApiException("Metadata service requires HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_network_int_path(),
@@ -720,6 +726,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
+        if not isinstance(connection, HTTPSConnection):
+            raise ApiException("Metadata service requires HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_vni_path(),
@@ -812,8 +820,10 @@ class HAFailOver():
         for route in routes:
             try:
                 route_network = ip_network(route["destination"])
-                if target_network.subnet_of(route_network):
-                    matching_routes.append((route, route_network.prefixlen))
+                # Type narrowing: both must be same IP version for subnet_of
+                if type(target_network) is type(route_network):
+                    if target_network.subnet_of(route_network):  # type: ignore[arg-type]
+                        matching_routes.append((route, route_network.prefixlen))
             except ValueError:
                 continue
 
@@ -1326,8 +1336,7 @@ def fail_over_floating_ip_stop(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_i
             if vni["id"] == vni_id_1 or vni["id"] == vni_id_2:
                 local_vni_id = vni["id"]
                 ha_fail_over.update_vpc_fip("remove", local_vni_id, fip_id)
-    fip_id, fip_ip = fail_over_get_attached_fip(api_key)
-    return fip_id, fip_ip
+    return fail_over_get_attached_fip(api_key)
 
 def fail_over_floating_ip_start(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_id: str, api_key: str = "") -> Tuple[Optional[str], Optional[str]]:
     """Start floating IP failover by attaching the floating IP to the local VNI.
@@ -1361,8 +1370,7 @@ def fail_over_floating_ip_start(vpc_url: str, vni_id_1: str, vni_id_2: str, fip_
                     remote_vni_id = vni_id_1
                 ha_fail_over.update_vpc_fip("remove", remote_vni_id, fip_id)
                 ha_fail_over.update_vpc_fip("add", local_vni_id, fip_id)
-    fip_id, fip_ip = fail_over_get_attached_fip(api_key)
-    return fip_id, fip_ip
+    return fail_over_get_attached_fip(api_key)
 
 def fail_over_get_attached_fip(api_key: str) -> Tuple[Optional[str], Optional[str]]:
     """Get attached floating IP information from instance metadata.
