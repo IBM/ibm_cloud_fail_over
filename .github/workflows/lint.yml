@@ -9,7 +9,7 @@ on:
 permissions: {}
 
 jobs:
-  pylint:
+  lint:
     runs-on: ubuntu-slim
     strategy:
       matrix:

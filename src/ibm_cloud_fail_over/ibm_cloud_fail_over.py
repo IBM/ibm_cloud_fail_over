@@ -52,7 +52,7 @@ class ApiException(Exception):
 
     def __str__(self) -> str:
         """Return string representation of the exception.
-        
+
         Returns:
             str: Formatted error message with optional status code
         """
@@ -391,15 +391,15 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
-        if not isinstance(connection, HTTPSConnection):
-            raise ApiException("Metadata service requires HTTPS connection")
+        if not isinstance(connection, (HTTPConnection, HTTPSConnection)):
+            raise ApiException("Metadata service requires HTTP or HTTPS connection")
         return self._get_iam_token_from_tp(connection)
 
-    def _get_iam_token_from_tp(self, connection: HTTPSConnection) -> str:
+    def _get_iam_token_from_tp(self, connection: Union[HTTPConnection, HTTPSConnection]) -> str:
         """Get IAM token from trusted profile.
 
         Args:
-            connection (HTTPSConnection): HTTPS connection to metadata service
+            connection (Union[HTTPConnection, HTTPSConnection]): HTTP or HTTPS connection to metadata service
 
         Raises:
             ApiException: If access token cannot be retrieved
@@ -420,11 +420,11 @@ class HAFailOver():
                             'Review if a TP is bound to the instance.')
         return f"Bearer {response['access_token']}"
 
-    def _get_metadata_token(self, connection: HTTPSConnection) -> str:
+    def _get_metadata_token(self, connection: Union[HTTPConnection, HTTPSConnection]) -> str:
         """Get metadata token.
 
         Args:
-            connection (HTTPSConnection): HTTPS connection to metadata service
+            connection (Union[HTTPConnection, HTTPSConnection]): HTTP or HTTPS connection to metadata service
 
         Returns:
             str: Metadata access token
@@ -692,8 +692,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
-        if not isinstance(connection, HTTPSConnection):
-            raise ApiException("Metadata service requires HTTPS connection")
+        if not isinstance(connection, (HTTPConnection, HTTPSConnection)):
+            raise ApiException("Metadata service requires HTTP or HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_path(),
@@ -711,8 +711,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
-        if not isinstance(connection, HTTPSConnection):
-            raise ApiException("Metadata service requires HTTPS connection")
+        if not isinstance(connection, (HTTPConnection, HTTPSConnection)):
+            raise ApiException("Metadata service requires HTTP or HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_istance_network_int_path(),
@@ -730,8 +730,8 @@ class HAFailOver():
             ApiException: If metadata service is not accessible or token cannot be retrieved
         """
         connection = self._get_metadata_connection()
-        if not isinstance(connection, HTTPSConnection):
-            raise ApiException("Metadata service requires HTTPS connection")
+        if not isinstance(connection, (HTTPConnection, HTTPSConnection)):
+            raise ApiException("Metadata service requires HTTP or HTTPS connection")
         metadata_token = self._get_metadata_token(connection)
         connection.request("GET",
                            self._get_metadata_vni_path(),
