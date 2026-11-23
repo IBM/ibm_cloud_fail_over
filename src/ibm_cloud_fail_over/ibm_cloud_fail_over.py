@@ -217,12 +217,11 @@ class HAFailOver():
         for vip_address in valid_vip_addresses:
             prefix = vip_address if '/' in vip_address else f'{vip_address}/32'
             result = run(['ip', 'a', op, prefix, 'dev', self.interface_name], check=False)
-            if result.returncode != 0:
-                if op == 'add' and result.returncode == 2:
-                    self.logger(f"{prefix} already assigned to {self.interface_name}, continuing")
-                else:
-                    self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
-                    raise CalledProcessError(result.returncode, result.args)
+            if result.returncode == 2:
+                self.logger(f"{op} {prefix} {self.interface_name} done previously, continuing")
+            elif result.returncode != 0:
+                self.logger(f"Error updating OS routes: ip addr {op} {prefix} dev {self.interface_name} returned {result.returncode}")
+                raise CalledProcessError(result.returncode, result.args)
 
     def update_vpc_routing_table_route(self, cmd: str, ingress_types: Optional[list] = None) -> str:
         """Update VPC routing table route and optionally manage local OS routes.
