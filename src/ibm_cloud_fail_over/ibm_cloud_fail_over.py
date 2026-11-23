@@ -656,6 +656,29 @@ class HAFailOver():
         if self.DEBUG:
             print(message, file=stderr)
 
+    def set_local_ip(self) -> None:
+        """Set local_ip to whichever of ext_ip_1 / ext_ip_2 is assigned to this host.
+
+        Lets route updates point at this node explicitly instead of toggling the
+        route to "the other" address, which would move traffic away from this
+        node when it is already the active one.  If neither address is found,
+        local_ip is left unchanged and find_the_current_and_next_hop_ip falls
+        back to the toggle behaviour.
+
+        Raises:
+            ApiException: If the host's addresses cannot be listed
+        """
+        try:
+            ip_a = run(['ip', 'a'], capture_output=True, text=True, check=True).stdout
+        except CalledProcessError as e:
+            msg = f'WARN: Unable to list assigned addresses {e}'
+            self.logger(msg)
+            raise ApiException(msg) from e
+        if self.ext_ip_1 and self.ext_ip_1 in ip_a:
+            self.local_ip = self.ext_ip_1
+        elif self.ext_ip_2 and self.ext_ip_2 in ip_a:
+            self.local_ip = self.ext_ip_2
+
     def find_the_current_and_next_hop_ip(self, route_address: str) -> None:
         """Find current and next hop IP addresses.
 
@@ -1213,6 +1236,7 @@ def fail_over_public_address_range(range_id: str, vpc_url: str = "", api_key: st
     ha_fail_over.apikey = api_key
     ha_fail_over.ext_ip_1 = nexthop_ip_1
     ha_fail_over.ext_ip_2 = nexthop_ip_2
+    ha_fail_over.set_local_ip()
 
     # Get instance metadata to set VSI local AZ and VPC ID
     instance_metadata = ha_fail_over.get_instance_metadata()
@@ -1288,16 +1312,7 @@ def fail_over(cmd: str) -> str:
         ApiException: If there is an error during the failover operation
     """
     ha_fail_over = HAFailOver()
-    try:
-        ip_a = run(['ip', 'a'], capture_output=True, text=True, check=True).stdout
-    except CalledProcessError as e:
-        msg = f'WARN: Unable to list assigned addresses {e}'
-        ha_fail_over.logger(msg)
-        raise ApiException(msg) from e
-    if ha_fail_over.ext_ip_1 in ip_a:
-        ha_fail_over.local_ip = ha_fail_over.ext_ip_1
-    elif ha_fail_over.ext_ip_2 in ip_a:
-        ha_fail_over.local_ip = ha_fail_over.ext_ip_2
+    ha_fail_over.set_local_ip()
     made_update = ha_fail_over.update_vpc_routing_table_route(cmd)
     return "Updated Custom Route: " + str(made_update)
 
@@ -1423,6 +1438,9 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
     ha_fail_over.apikey = api_key
     ha_fail_over.interface_name = interface_name
     ha_fail_over.vip_addresses = vip_addresses.split(',')
+    # Point the route at this node explicitly so repeated SET calls are
+    # idempotent instead of toggling between the nodes.
+    ha_fail_over.set_local_ip()
     instance_metadata = ha_fail_over.get_instance_metadata()
     if "vpc" in instance_metadata:
         ha_fail_over.vpc_id = instance_metadata["vpc"]["id"]
