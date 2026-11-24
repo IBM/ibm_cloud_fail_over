@@ -1436,7 +1436,7 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
     ha_fail_over.ext_ip_1 = ext_ip_1
     ha_fail_over.apikey = api_key
     ha_fail_over.interface_name = interface_name
-    ha_fail_over.vip_addresses = vip_addresses.split(',')
+    ha_fail_over.vip_addresses = [v.strip() for v in vip_addresses.split(',') if v.strip()]
     # Point the route at this node explicitly so repeated SET calls are
     # idempotent instead of toggling between the nodes.
     ha_fail_over.set_local_ip()
