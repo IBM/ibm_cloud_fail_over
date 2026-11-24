@@ -14,6 +14,7 @@ Usage:
 
 This file must stay valid on Python 3.9: no 'X | Y' type unions, no 'match'.
 """
+import json
 import os
 import subprocess
 import sys
@@ -39,6 +40,19 @@ EXT_IP_1 = "10.240.0.4"   # permanent private IP of Node A
 EXT_IP_2 = "10.240.0.5"   # permanent private IP of Node B
 IFACE    = "eth0"          # local network interface name
 VIPS     = ["192.168.100.1", "192.168.100.2"]   # virtual IPs to assign
+
+
+def ip_a_with(*addresses):
+    """Return text shaped like 'ip a' output for a host owning `addresses`."""
+    out = ("1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n"
+           "    inet 127.0.0.1/8 scope host lo\n"
+           "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n")
+    for a in addresses:
+        out += "    inet {}/24 brd 10.240.0.255 scope global eth0\n".format(a)
+    return out
+
+
+IP_A_NEITHER = ip_a_with()   # a host that owns neither node address
 
 
 def prefix(vip):
@@ -71,14 +85,19 @@ def prefix(vip):
 # without needing a real error response.
 # ---------------------------------------------------------------------------
 class FakeCloud:
-    """Fake VPC API: one routing table, one route whose next hop is ext_ip_1."""
+    """Fake VPC API: one routing table, one route (next hop ext_ip_1 by default)."""
 
     def __init__(self):
         self.calls = []            # list of (method, path) tuples
+        self.bodies = []           # list of (method, body) tuples
         self.fail_methods = set()  # HTTP methods that should raise ApiException
+        # Where the route points right now.  Tests set this to EXT_IP_2 to
+        # model "the peer is currently active".
+        self.route_next_hop = EXT_IP_1
 
     def request(self, method, path, headers=None, body=None):
         self.calls.append((method, path))
+        self.bodies.append((method, body))
         if method in self.fail_methods:
             # Same exception type the real _make_api_request raises for a
             # non-2xx response, so the library's 'except ApiException' paths
@@ -90,7 +109,7 @@ class FakeCloud:
                 "destination": "192.168.100.0/24",
                 "zone": {"name": "us-south-1"},
                 "advertise": True, "priority": 2,
-                "next_hop": {"address": EXT_IP_1},
+                "next_hop": {"address": self.route_next_hop},
             }]}
         if method == "GET" and "/routing_tables?" in path:
             return {"routing_tables": [{"id": "rt1", "name": "tbl"}]}
@@ -99,6 +118,11 @@ class FakeCloud:
     def patches(self):
         """Return only the PATCH calls recorded so far."""
         return [c for c in self.calls if c[0] == "PATCH"]
+
+    def patched_next_hops(self):
+        """Return the next_hop address sent in each PATCH body."""
+        return [json.loads(b)["next_hop"]["address"]
+                for m, b in self.bodies if m == "PATCH"]
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +139,17 @@ class Base(unittest.TestCase):
         # empty for the happy path; set ip_rc[prefix(vip)] = non-zero to
         # simulate 'ip a add/del' exiting with that code for that address.
         self.ip_rc = {}
+
+        # What 'ip a' prints on the simulated host, and every 'ip a' call made.
+        # set_local_ip() decides whether THIS node is ext_ip_1 or ext_ip_2 by
+        # looking for those addresses in this text.  The default is a host that
+        # owns neither (only loopback), so local_ip stays "" and the library
+        # falls back to toggling.  Tests that care about "which node am I" use
+        # as_node() to say so.  Keeping this out of ip_cmds means the existing
+        # 'ip a add/del' assertions are unaffected.
+        self.ip_a_output = IP_A_NEITHER
+        self.ip_a_calls = []
+        self.ip_a_rc = 0
 
         # -------------------------------------------------------------------
         # fake_run – replaces the library's 'run' function for every call it
@@ -135,6 +170,12 @@ class Base(unittest.TestCase):
         # goes back to check=True.
         # -------------------------------------------------------------------
         def fake_run(cmd, *a, **k):
+            if list(cmd) == ["ip", "a"]:              # listing, not modifying
+                self.ip_a_calls.append(list(cmd))
+                if self.ip_a_rc and k.get("check"):
+                    raise subprocess.CalledProcessError(self.ip_a_rc, cmd)
+                return subprocess.CompletedProcess(
+                    cmd, self.ip_a_rc, self.ip_a_output, "")
             self.ip_cmds.append(list(cmd))            # record the command
             rc = self.ip_rc.get(cmd[3], 0)            # look up failure override
             if rc and k.get("check"):                 # non-zero rc + check=True?
@@ -221,6 +262,10 @@ class Base(unittest.TestCase):
             # -------------------------------------------------------------------
             p.start()
             self.addCleanup(p.stop)
+
+    def as_node(self, ip):
+        """Make the simulated host look like the node that owns `ip`."""
+        self.ip_a_output = ip_a_with(ip)
 
     # Convenience: call fail_over_cr_vip with sensible defaults.
     def vip_op(self, cmd, vips=",".join(VIPS)):
@@ -320,28 +365,95 @@ class TestUpdateOsRoutes(Base):
             self.make(VIPS)._update_os_iface_vip_addresses("UNSET")
         self.assertEqual(self.ip_cmds, self.expected("del", VIPS[:1]))
 
-    def test_del_rc2_is_not_tolerated_characterization(self):
-        # CHARACTERIZATION, not an endorsement.  The 'already assigned'
-        # tolerance (rc 2) exists only for 'add'.  For 'del' ANY non-zero exit
-        # raises, so UNSET on an interface that no longer has the address
-        # (for example a second stop in a row) raises instead of succeeding.
-        # OCF requires stop to be idempotent, so this may need to change.
-        # I expect 'ip a del' of a missing address to exit with 2 as well, but
-        # that is unverified; '--live' mode prints the real exit code.
-        # This test pins today's behaviour so a change is a deliberate one.
+    def test_del_rc2_means_already_gone_and_continues(self):
+        # 'ip a del' of an address that is no longer on the interface exits
+        # with 2.  OCF requires stop to be idempotent, so the library treats
+        # that like the 'add' case: log it and move on.  Both VIPs must still
+        # be attempted and no exception may escape.
         self.ip_rc[prefix(VIPS[0])] = 2
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.make(VIPS)._update_os_iface_vip_addresses("UNSET")
+        self.make(VIPS)._update_os_iface_vip_addresses("UNSET")   # must not raise
+        self.assertEqual(self.ip_cmds, self.expected("del"))
+
+    def test_whitespace_only_entry_is_not_stripped_here_characterization(self):
+        # CHARACTERIZATION.  Stripping is done by fail_over_cr_vip when it
+        # builds the list (see TestFailOverCrVip), not by this method, which
+        # only drops entries that are exactly ''.  A whitespace-only entry
+        # handed straight to this method therefore still reaches 'ip'.  This
+        # pins that so moving the stripping is a deliberate decision.
+        self.make([" "])._update_os_iface_vip_addresses("SET")
+        self.assertEqual(len(self.ip_cmds), 1)
+
+
+# ---------------------------------------------------------------------------
+# TestSetLocalIp – HAFailOver.set_local_ip in isolation
+#
+# set_local_ip decides "which node am I" by looking for ext_ip_1 / ext_ip_2 in
+# the output of 'ip a'.  When it fails to find either, local_ip stays "" and the
+# route update toggles to the PEER.  That toggle is the bug that hit an already
+# active node, so every branch here matters.
+# ---------------------------------------------------------------------------
+class TestSetLocalIp(Base):
+
+    def make(self):
+        h = lib.HAFailOver()
+        h.ext_ip_1 = EXT_IP_1
+        h.ext_ip_2 = EXT_IP_2
+        return h
+
+    def test_local_ip_starts_empty(self):
+        # The default is the value that caused the bug; pin it so a change to
+        # the default is noticed.
+        self.assertEqual(self.make().local_ip, "")
+
+    def test_host_owning_ext_ip_1(self):
+        self.as_node(EXT_IP_1)
+        h = self.make()
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, EXT_IP_1)
+        self.assertEqual(self.ip_a_calls, [["ip", "a"]])
+
+    def test_host_owning_ext_ip_2(self):
+        self.as_node(EXT_IP_2)
+        h = self.make()
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, EXT_IP_2)
+
+    def test_host_owning_neither_leaves_local_ip_empty(self):
+        h = self.make()
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, "")
+
+    def test_host_owning_both_prefers_ext_ip_1(self):
+        self.ip_a_output = ip_a_with(EXT_IP_1, EXT_IP_2)
+        h = self.make()
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, EXT_IP_1)
+
+    def test_empty_ext_ips_never_match(self):
+        # '' is a substring of every string, so an unguarded "'' in ip_a"
+        # would claim to be ext_ip_1.  This is exactly how an unset
+        # ext_ip_1/ext_ip_2 must NOT behave.
+        self.as_node(EXT_IP_1)
+        h = lib.HAFailOver()          # ext_ip_1 and ext_ip_2 both ""
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, "")
+
+    def test_ip_a_failure_raises_api_exception(self):
+        self.ip_a_rc = 1
+        with self.assertRaises(lib.ApiException):
+            self.make().set_local_ip()
 
     @unittest.expectedFailure
-    def test_whitespace_around_entry_is_stripped(self):
-        # KNOWN GAP: entries are not stripped.  A value such as
-        # "192.168.100.1, 192.168.100.2" splits into ['192.168.100.1',
-        # ' 192.168.100.2'] and the second command is built with a leading
-        # space, which 'ip' rejects.  Fix: strip each entry when the list is
-        # built or when it is used.
-        self.make([VIPS[0], " " + VIPS[1]])._update_os_iface_vip_addresses("SET")
-        self.assertEqual(self.ip_cmds, self.expected("add"))
+    def test_ip_prefix_of_another_address_is_not_a_match(self):
+        # KNOWN GAP: set_local_ip does a substring test, so a host that owns
+        # 10.240.0.45 is taken to own ext_ip_1 '10.240.0.4'.  The node would
+        # then point the route at the wrong address.  Fix: match whole
+        # addresses, for example with a regex on r'inet {ip}/' or by parsing
+        # 'ip -o addr'.
+        self.as_node("10.240.0.45")
+        h = self.make()
+        h.set_local_ip()
+        self.assertEqual(h.local_ip, "")
 
 
 # ---------------------------------------------------------------------------
@@ -355,6 +467,101 @@ class TestFailOverCrVip(Base):
         result = self.vip_op("SET")
         self.assertEqual(result, EXT_IP_2)              # next hop now points to Node B
         self.assertEqual(len(self.cloud.patches()), 1)  # exactly one cloud PATCH
+        self.assertEqual(self.ip_cmds, self.expected("add"))
+
+    # --- which node am I: the regression for 'start on the active node
+    # --- switched the route to the peer' ---------------------------------
+
+    def test_set_on_active_node_does_not_move_route_to_peer(self):
+        # THE REGRESSION.  This node is ext_ip_1 and the route already points
+        # at it.  With local_ip == "" the library toggled the route to
+        # ext_ip_2 (the peer).  It must leave the route alone.
+        self.as_node(EXT_IP_1)
+        self.cloud.route_next_hop = EXT_IP_1
+        result = self.vip_op("SET")
+        self.assertEqual(result, EXT_IP_1)
+        self.assertEqual(self.cloud.patched_next_hops(), [])
+
+    def test_set_on_active_node_2_does_not_move_route_to_peer(self):
+        # Same, for the other node: the bug must not be specific to ext_ip_1.
+        self.as_node(EXT_IP_2)
+        self.cloud.route_next_hop = EXT_IP_2
+        result = self.vip_op("SET")
+        self.assertEqual(result, EXT_IP_2)
+        self.assertEqual(self.cloud.patched_next_hops(), [])
+
+    def test_set_on_standby_node_1_takes_over_route(self):
+        # This node is ext_ip_1, the route points at the peer: take it over.
+        self.as_node(EXT_IP_1)
+        self.cloud.route_next_hop = EXT_IP_2
+        result = self.vip_op("SET")
+        self.assertEqual(result, EXT_IP_1)
+        self.assertEqual(self.cloud.patched_next_hops(), [EXT_IP_1])
+        self.assertEqual(self.ip_cmds, self.expected("add"))
+
+    def test_set_on_standby_node_2_takes_over_route(self):
+        self.as_node(EXT_IP_2)
+        self.cloud.route_next_hop = EXT_IP_1
+        result = self.vip_op("SET")
+        self.assertEqual(result, EXT_IP_2)
+        self.assertEqual(self.cloud.patched_next_hops(), [EXT_IP_2])
+        self.assertEqual(self.ip_cmds, self.expected("add"))
+
+    def test_repeated_set_is_idempotent(self):
+        # Pacemaker may call start more than once.  After the first SET moves
+        # the route here, a second SET must not move it again.
+        self.as_node(EXT_IP_2)
+        self.cloud.route_next_hop = EXT_IP_1
+        self.vip_op("SET")
+        self.cloud.route_next_hop = EXT_IP_2    # the cloud now reflects the PATCH
+        self.cloud.calls[:] = []
+        self.cloud.bodies[:] = []
+        self.assertEqual(self.vip_op("SET"), EXT_IP_2)
+        self.assertEqual(self.cloud.patched_next_hops(), [])
+
+    def test_set_looks_up_local_address_before_touching_the_cloud(self):
+        # Ordering: set_local_ip must run before the route is evaluated, or
+        # the toggle fallback is used.  'ip a' is the very first thing run.
+        self.as_node(EXT_IP_1)
+        self.vip_op("SET")
+        self.assertEqual(self.ip_a_calls, [["ip", "a"]])
+
+    def test_set_on_host_with_unknown_address_falls_back_to_toggle(self):
+        # Characterization of the fallback: if this host owns neither node
+        # address (misconfigured ext_ip_*), the old toggle behaviour applies.
+        self.cloud.route_next_hop = EXT_IP_1
+        result = self.vip_op("SET")
+        self.assertEqual(result, EXT_IP_2)
+        self.assertEqual(self.cloud.patched_next_hops(), [EXT_IP_2])
+
+    def test_set_fails_when_ip_a_fails(self):
+        # Better to fail the resource than to guess and move the route.
+        self.ip_a_rc = 1
+        with self.assertRaises(lib.ApiException):
+            self.vip_op("SET")
+        self.assertEqual(self.cloud.patches(), [])
+        self.assertEqual(self.ip_cmds, [])
+
+    def test_get_does_not_depend_on_local_ip(self):
+        # GET only reports the next hop, whichever node asks.
+        self.as_node(EXT_IP_2)
+        self.cloud.route_next_hop = EXT_IP_1
+        self.assertEqual(self.vip_op("GET"), EXT_IP_1)
+        self.assertEqual(self.cloud.patches(), [])
+
+    @unittest.expectedFailure
+    def test_set_on_active_node_still_assigns_vips(self):
+        # KNOWN GAP: when the route already points at this node,
+        # update_vpc_routing_table_route returns early ("Route update
+        # unnecessary") BEFORE _update_os_iface_vip_addresses runs.  If the
+        # VIPs are missing from the interface (reboot, manual 'ip a del', or a
+        # start after a stop that removed them), start on the active node
+        # succeeds without ever assigning them.  Before the local_ip helper
+        # this path was hidden by the toggle.  Fix: assign the VIPs on SET
+        # even when no route PATCH is needed.
+        self.as_node(EXT_IP_1)
+        self.cloud.route_next_hop = EXT_IP_1
+        self.vip_op("SET")
         self.assertEqual(self.ip_cmds, self.expected("add"))
 
     def test_set_with_api_failure_adds_no_vips(self):
@@ -403,6 +610,66 @@ class TestFailOverCrVip(Base):
         # The same filtering must apply on the way down, otherwise stop would
         # fail for every resource that has no vip_addresses configured.
         self.vip_op("UNSET", vips="")
+        self.assertEqual(self.ip_cmds, [])
+
+    # --- parsing of the vip_addresses string by fail_over_cr_vip -----------
+    # fail_over_cr_vip strips each entry and drops the empty ones before the
+    # list reaches HAFailOver.  These tests go through it, because testing
+    # _update_os_iface_vip_addresses alone cannot see that step.  Each one
+    # fails if the parsing goes back to a bare vip_addresses.split(',').
+
+    def test_whitespace_only_vip_addresses_runs_no_ip_command(self):
+        # A resource parameter of " " is truthy, so only strip() removes it.
+        # Without that, the library ran 'ip a add  /32 dev eth0'.
+        for vips in (" ", "   ", "\t", "\n"):
+            self.ip_cmds[:] = []
+            self.vip_op("SET", vips=vips)
+            self.assertEqual(self.ip_cmds, [], repr(vips))
+
+    def test_whitespace_only_vip_addresses_unset_runs_no_ip_command(self):
+        for vips in (" ", "\t"):
+            self.vip_op("UNSET", vips=vips)
+            self.assertEqual(self.ip_cmds, [], repr(vips))
+
+    def test_whitespace_after_comma_is_stripped(self):
+        # The natural way to write a list: "a, b".
+        self.vip_op("SET", vips=VIPS[0] + ", " + VIPS[1])
+        self.assertEqual(self.ip_cmds, self.expected("add"))
+
+    def test_whitespace_before_comma_and_around_list_is_stripped(self):
+        self.vip_op("SET", vips="  " + VIPS[0] + " ,\t" + VIPS[1] + "  ")
+        self.assertEqual(self.ip_cmds, self.expected("add"))
+
+    def test_whitespace_is_stripped_on_unset_too(self):
+        self.vip_op("UNSET", vips=VIPS[0] + ", " + VIPS[1])
+        self.assertEqual(self.ip_cmds, self.expected("del"))
+
+    def test_trailing_leading_and_doubled_commas_are_ignored(self):
+        for vips in (VIPS[0] + "," + VIPS[1] + ",",
+                     "," + VIPS[0] + "," + VIPS[1],
+                     VIPS[0] + ",," + VIPS[1],
+                     VIPS[0] + ", ," + VIPS[1]):    # entry that is only a space
+            self.ip_cmds[:] = []
+            self.vip_op("SET", vips=vips)
+            self.assertEqual(self.ip_cmds, self.expected("add"), repr(vips))
+
+    def test_only_commas_runs_no_ip_command(self):
+        for vips in (",", ",,", " , , "):
+            self.vip_op("SET", vips=vips)
+            self.assertEqual(self.ip_cmds, [], repr(vips))
+
+    def test_padded_entry_with_prefix_keeps_its_prefix(self):
+        # Stripping must happen before the '/' check, otherwise the padded
+        # entry is still recognised but the command carries the padding.
+        self.vip_op("SET", vips=" 192.168.100.1/24 , " + VIPS[1])
+        self.assertEqual(self.ip_cmds[0], ["ip", "a", "add", "192.168.100.1/24", "dev", IFACE])
+        self.assertEqual(self.ip_cmds[1], ["ip", "a", "add", prefix(VIPS[1]), "dev", IFACE])
+
+    def test_empty_vips_do_not_prevent_the_route_update(self):
+        # Parsing an empty/blank VIP string must not short-circuit SET: the
+        # cloud route is still updated, only the local 'ip' step is skipped.
+        self.vip_op("SET", vips=" , ")
+        self.assertEqual(len(self.cloud.patches()), 1)
         self.assertEqual(self.ip_cmds, [])
 
     @unittest.expectedFailure
