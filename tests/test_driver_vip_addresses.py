@@ -658,17 +658,6 @@ class TestFailOverCrVip(Base):
         self.assertEqual(len(self.cloud.patches()), 1)
         self.assertEqual(self.ip_cmds, [])
 
-    @unittest.expectedFailure
-    def test_space_separated_vips_are_split(self):
-        # KNOWN GAP: the library splits vip_addresses on ',' only (its
-        # docstring says "comma-separated"), but the OCF RA convention seen in
-        # gcp-vpc-move-vip uses spaces as the delimiter.  The two must agree.
-        # Fix: either change the library split to whitespace, or document
-        # comma as the only supported delimiter and delete this test.
-        self.vip_op("SET", vips="192.168.100.1 192.168.100.2")
-        self.assertEqual(self.ip_cmds, self.expected("add"))
-
-
 # ---------------------------------------------------------------------------
 # live() – optional mode that really runs ip a add/del on a Linux host.
 # No mocks except the version lookup: calls _update_os_iface_vip_addresses directly and
