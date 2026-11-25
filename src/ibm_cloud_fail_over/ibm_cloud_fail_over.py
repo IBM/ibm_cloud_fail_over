@@ -308,6 +308,7 @@ class HAFailOver():
 
                         if self.update_next_hop_vsi == route["next_hop"]["address"]:
                             self.logger(f"Route update unnecessary - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
+                            self._update_os_iface_vip_addresses(cmd)
                             return route["next_hop"]["address"]
 
                         self.logger(f"Route update necessary - current hop: {self.next_hop_vsi}, new hop: {self.update_next_hop_vsi}")
@@ -660,7 +661,7 @@ class HAFailOver():
 
         Lets route updates point at this node explicitly instead of toggling the
         route to "the other" address, which would move traffic away from this
-        node when it is already the active one.  If neither address is found,
+        node when it is already the active one. If neither address is found,
         local_ip is left unchanged and find_the_current_and_next_hop_ip falls
         back to the toggle behaviour.
 
