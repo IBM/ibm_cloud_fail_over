@@ -19,10 +19,11 @@
 This module provides functions for handling failover operations in IBM Cloud VPC.
 """
 from http.client import HTTPConnection, HTTPSConnection
-from json import dumps, loads
 from importlib.metadata import version as v
 from ipaddress import ip_network
+from json import dumps, loads
 from os import environ as env
+from re import search
 from socket import create_connection, timeout
 from subprocess import CalledProcessError, run
 from sys import argv, stderr
@@ -674,9 +675,9 @@ class HAFailOver():
             msg = f'WARN: Unable to list assigned addresses {e}'
             self.logger(msg)
             raise ApiException(msg) from e
-        if self.ext_ip_1 and self.ext_ip_1 in ip_a:
+        if self.ext_ip_1 and search(f'inet {self.ext_ip_1}/', ip_a):
             self.local_ip = self.ext_ip_1
-        elif self.ext_ip_2 and self.ext_ip_2 in ip_a:
+        elif self.ext_ip_2 and search(f'inet {self.ext_ip_2}/', ip_a):
             self.local_ip = self.ext_ip_2
 
     def find_the_current_and_next_hop_ip(self, route_address: str) -> None:
@@ -1438,8 +1439,6 @@ def fail_over_cr_vip(cmd: str, vpc_url: str, ext_ip_1: str, ext_ip_2: str, api_k
     ha_fail_over.apikey = api_key
     ha_fail_over.interface_name = interface_name
     ha_fail_over.vip_addresses = [v.strip() for v in vip_addresses.split(',') if v.strip()]
-    # Point the route at this node explicitly so repeated SET calls are
-    # idempotent instead of toggling between the nodes.
     ha_fail_over.set_local_ip()
     instance_metadata = ha_fail_over.get_instance_metadata()
     if "vpc" in instance_metadata:

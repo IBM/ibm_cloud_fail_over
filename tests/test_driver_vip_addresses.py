@@ -443,13 +443,7 @@ class TestSetLocalIp(Base):
         with self.assertRaises(lib.ApiException):
             self.make().set_local_ip()
 
-    @unittest.expectedFailure
     def test_ip_prefix_of_another_address_is_not_a_match(self):
-        # KNOWN GAP: set_local_ip does a substring test, so a host that owns
-        # 10.240.0.45 is taken to own ext_ip_1 '10.240.0.4'.  The node would
-        # then point the route at the wrong address.  Fix: match whole
-        # addresses, for example with a regex on r'inet {ip}/' or by parsing
-        # 'ip -o addr'.
         self.as_node("10.240.0.45")
         h = self.make()
         h.set_local_ip()
