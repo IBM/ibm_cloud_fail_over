@@ -549,16 +549,8 @@ class TestFailOverCrVip(Base):
         self.assertEqual(self.vip_op("GET"), EXT_IP_1)
         self.assertEqual(self.cloud.patches(), [])
 
-    @unittest.expectedFailure
     def test_set_on_active_node_still_assigns_vips(self):
-        # KNOWN GAP: when the route already points at this node,
-        # update_vpc_routing_table_route returns early ("Route update
-        # unnecessary") BEFORE _update_os_iface_vip_addresses runs.  If the
-        # VIPs are missing from the interface (reboot, manual 'ip a del', or a
-        # start after a stop that removed them), start on the active node
-        # succeeds without ever assigning them.  Before the local_ip helper
-        # this path was hidden by the toggle.  Fix: assign the VIPs on SET
-        # even when no route PATCH is needed.
+        # Assign the VIPs on SET even when no route PATCH is needed.
         self.as_node(EXT_IP_1)
         self.cloud.route_next_hop = EXT_IP_1
         self.vip_op("SET")
